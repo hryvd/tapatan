@@ -1,0 +1,53 @@
+import 'package:flutter/material.dart';
+
+class LucideIcons {
+  static const IconData wifi = Icons.wifi;
+  static const IconData shield = Icons.security;
+  static const IconData keyRound = Icons.key;
+  static const IconData checkCircle = Icons.check_circle;
+  static const IconData alertCircle = Icons.error;
+  static const IconData home = Icons.home;
+  static const IconData barChart2 = Icons.bar_chart;
+  static const IconData creditCard = Icons.credit_card;
+  static const IconData user = Icons.person;
+  static const IconData bell = Icons.notifications;
+  static const IconData eye = Icons.visibility;
+  static const IconData send = Icons.send;
+  static const IconData arrowDownLeft = Icons.call_received;
+  static const IconData dollarSign = Icons.attach_money;
+  static const IconData mail = Icons.mail;
+  static const IconData badgeCheck = Icons.verified;
+  static const IconData timer = Icons.timer;
+  static const IconData alertTriangle = Icons.warning;
+  static const IconData activity = Icons.show_chart;
+  static const IconData trendingUp = Icons.trending_up;
+  static const IconData zap = Icons.bolt;
+  static const IconData cpu = Icons.memory;
+  static const IconData arrowLeft = Icons.arrow_back;
+  static const IconData xCircle = Icons.cancel;
+  static const IconData lock = Icons.lock;
+  static const IconData info = Icons.info;
+  static const IconData chevronUp = Icons.expand_less;
+  static const IconData chevronDown = Icons.expand_more;
+  static const IconData chevronRight = Icons.chevron_right;
+  static const IconData logOut = Icons.logout;
+  static const IconData eyeOff = Icons.visibility_off;
+  static const IconData arrowUpRight = Icons.call_made;
+  static const IconData plus = Icons.add;
+  // Additional icons used across screens
+  static const IconData star = Icons.star;
+  static const IconData trash2 = Icons.delete_outline;
+  static const IconData upload = Icons.upload;
+  static const IconData x = Icons.close;
+  static const IconData qrCode = Icons.qr_code;
+  static const IconData fingerprint = Icons.fingerprint;
+  static const IconData helpCircle = Icons.help_outline;
+  static const IconData calendar = Icons.calendar_today;
+  static const IconData check = Icons.check;
+  static const IconData shieldCheck = Icons.verified_user;
+  static const IconData scanFace = Icons.face_retouching_natural;
+  static const IconData scanLine = Icons.document_scanner_outlined;
+  static const IconData camera = Icons.camera_alt;
+  static const IconData sun = Icons.wb_sunny;
+  static const IconData arrowRight = Icons.arrow_forward;
+}
