@@ -50,4 +50,21 @@ class LucideIcons {
   static const IconData camera = Icons.camera_alt;
   static const IconData sun = Icons.wb_sunny;
   static const IconData arrowRight = Icons.arrow_forward;
+  // NFC Debug screen icons
+  static const IconData download = Icons.download;
+  static const IconData settings = Icons.tune;
+  static const IconData shieldOff = Icons.gpp_bad;
+  static const IconData terminal = Icons.terminal;
+  static const IconData copy = Icons.copy;
+  static const IconData chevronLeft = Icons.chevron_left;
+  // Face liveness + camera overlay icons
+  static const IconData smile = Icons.sentiment_satisfied_alt;
+  static const IconData refreshCw = Icons.refresh;
+  static const IconData cameraOff = Icons.no_photography_outlined;
+  // Sar-E / store icons
+  static const IconData shoppingCart = Icons.shopping_cart;
+  static const IconData shoppingBag = Icons.shopping_bag;
+  static const IconData store = Icons.storefront;
+  static const IconData nfc = Icons.nfc;
+  static const IconData phone = Icons.phone;
 }

@@ -1,0 +1,68 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=DM+Mono:ital,wght@0,400;0,500;1,400&display=swap');
+@import 'tailwindcss';
+
+* { font-family: 'Inter', system-ui, sans-serif; }
+
+@keyframes slideDown {
+  from { transform: translateY(-120%); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+@keyframes laserSweep {
+  0%   { transform: translateY(0px);   opacity: 1; }
+  45%  { transform: translateY(152px); opacity: 1; }
+  50%  { transform: translateY(152px); opacity: 0; }
+  51%  { transform: translateY(0px);   opacity: 0; }
+  56%  { opacity: 1; }
+  100% { transform: translateY(0px);   opacity: 1; }
+}
+
+@keyframes bounceDot {
+  0%, 100% { transform: translateY(0px);  }
+  50%       { transform: translateY(-5px); }
+}
+
+@keyframes scaleIn {
+  from { transform: scale(0.4); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
+}
+
+@keyframes fadeInUp {
+  from { transform: translateY(14px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+@keyframes arrowFlow {
+  0%, 100% { opacity: 0.1; }
+  50%       { opacity: 1; }
+}
+
+@keyframes pulseRing {
+  0%   { box-shadow: 0 0 0 0   rgba(34,197,94,0.5); }
+  70%  { box-shadow: 0 0 0 10px rgba(34,197,94,0); }
+  100% { box-shadow: 0 0 0 0   rgba(34,197,94,0); }
+}
+
+@keyframes glowPulse {
+  0%, 100% { opacity: 0.6; }
+  50%       { opacity: 1; }
+}
+
+@keyframes spinSlow {
+  from { transform: rotate(0deg);   }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes bridgePing {
+  0%   { transform: translateX(0%);   opacity: 1; }
+  80%  { opacity: 0.6; }
+  100% { transform: translateX(100%); opacity: 0; }
+}
+
+@keyframes bridgePingLeft {
+  0%   { transform: translateX(0%);    opacity: 1; }
+  80%  { opacity: 0.6; }
+  100% { transform: translateX(-100%); opacity: 0; }
+}
+
+::-webkit-scrollbar { display: none; }

@@ -216,7 +216,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   controller: scroll,
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   children: [
-                    _buildFaqItem('How does NFC payment work?', 'Tap your Java Card to the back of your phone to write a secure token. Then tap your phone at any NFC-enabled POS terminal to complete the payment.'),
+                    _buildFaqItem('How does NFC payment work?', 'Tap your NFC smart card to the back of your phone to write a secure token. Then tap your phone at any NFC-enabled POS terminal to complete the payment.'),
                     _buildFaqItem('How do I arm my card?', 'On the home screen, press "Enable Transaction" and follow the NFC unlock flow to arm your card for one-time payment.'),
                     _buildFaqItem('What happens after a payment?', 'After each NFC payment, your card is automatically disarmed for security. You\'ll need to re-arm it for your next transaction.'),
                     _buildFaqItem('How do I add a virtual card?', 'Go to the Cards tab and tap "Add Card". Enter your card details and select your provider.'),
@@ -277,7 +277,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         'title': 'PREFERENCES',
         'items': [
           {'icon': LucideIcons.bell, 'label': 'Notifications', 'color': 0xFFF59E0B, 'toggle': true},
-          {'icon': LucideIcons.wifi, 'label': 'NFC & Java Card Settings', 'color': 0xFF06B6D4, 'action': () {}},
+          {'icon': LucideIcons.wifi, 'label': 'NFC Debug Console', 'color': 0xFF06B6D4, 'toggle': true, 'isNfcDebug': true},
         ],
       },
       {

@@ -1,359 +1,375 @@
 import 'package:flutter/material.dart';
 import '../utils/lucide_icons.dart';
-import '../services/card_revocation_service.dart';
 
-class SecurityInfoScreen extends StatefulWidget {
+// ── Security Info Screen ─────────────────────────────────────────────────
+// Information screen about the Tapat Card security system.
+
+class SecurityInfoScreen extends StatelessWidget {
   const SecurityInfoScreen({super.key});
 
+  static const _teal = Color(0xFF06B6D4);
+  static const _green = Color(0xFF34D399);
+  static const _amber = Color(0xFFF59E0B);
+  static const _red = Color(0xFFF87171);
+
   @override
-  State<SecurityInfoScreen> createState() => _SecurityInfoScreenState();
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF020B18),
+      body: SafeArea(
+        bottom: false,
+        child: CustomScrollView(
+          physics: const BouncingScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+                child: Row(
+                  children: [
+                    GestureDetector(
+                      onTap: () => Navigator.pop(context),
+                      child: Container(
+                        width: 40, height: 40,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.06),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white.withOpacity(0.12)),
+                        ),
+                        child: const Icon(LucideIcons.arrowLeft, color: Colors.white54, size: 18),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Security Center', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                        Text('Tapat Card · JCOP J3R150', style: TextStyle(color: Colors.white38, fontSize: 12)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(24, 24, 24, MediaQuery.of(context).padding.bottom + 100),
+              sliver: SliverList(
+                delegate: SliverChildListDelegate([
+
+                  // ── ECDSA P-256 ───────────────────────────────────────
+                  _SectionCard(
+                    icon: LucideIcons.keyRound,
+                    iconColor: _teal,
+                    title: 'ECDSA P-256 Key',
+                    children: const [
+                      _InfoRow(label: 'Algorithm', value: 'ECDSA with SHA-256'),
+                      _InfoRow(label: 'Curve', value: 'NIST P-256 (secp256r1)'),
+                      _InfoRow(label: 'Key storage', value: 'On-card JavaCard secure element'),
+                      _InfoRow(label: 'Key exportability', value: 'Never — private key never leaves card'),
+                      _InfoRow(label: 'Signature size', value: '64 bytes (r + s, each 32 bytes)'),
+                      _InfoRow(label: 'Random nonce', value: 'Per-signature nonce prevents replay'),
+                    ],
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // ── Signature Counter ─────────────────────────────────
+                  _SectionCard(
+                    icon: LucideIcons.activity,
+                    iconColor: _green,
+                    title: 'Signature Counter',
+                    children: const [
+                      _InfoRow(label: 'Purpose', value: 'Prevent replay attacks'),
+                      _InfoRow(label: 'Location', value: 'Stored on-card in persistent memory'),
+                      _InfoRow(label: 'Behaviour', value: 'Increments with every INTERNAL AUTHENTICATE call'),
+                      _InfoRow(label: 'Server check', value: 'Server rejects counter ≤ last seen value'),
+                      _InfoRow(label: 'Reset', value: 'Only by card re-personalisation (destroys key)'),
+                    ],
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // ── PIN Lockout ───────────────────────────────────────
+                  _SectionCard(
+                    icon: LucideIcons.lock,
+                    iconColor: _amber,
+                    title: 'PIN Lockout Policy',
+                    children: const [
+                      _InfoRow(label: 'Max retries', value: '5 attempts'),
+                      _InfoRow(label: 'Enforcement', value: 'On-card OwnerPIN (JavaCard API)'),
+                      _InfoRow(label: 'After 5 failures', value: 'Card enters BLOCKED state'),
+                      _InfoRow(label: 'App cannot bypass', value: 'Counter lives in card\'s EEPROM'),
+                      _InfoRow(label: 'Unblock method', value: 'PUK code via card admin channel'),
+                      _InfoRow(label: 'Lifecycle after block', value: 'PIN_BLOCKED → requires admin reset'),
+                    ],
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // ── Auth Tiers ────────────────────────────────────────
+                  _SectionCard(
+                    icon: LucideIcons.shieldCheck,
+                    iconColor: _teal,
+                    title: 'Progressive Auth Tiers',
+                    children: const [],
+                    customChild: _AuthTiersTable(),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // ── STRIDE Threat Model ───────────────────────────────
+                  _SectionCard(
+                    icon: LucideIcons.shield,
+                    iconColor: _red,
+                    title: 'STRIDE Threat Model',
+                    children: const [
+                      _StrideRow(
+                        threat: 'S — Spoofing',
+                        mitigation: 'Challenge-response ECDSA; private key never leaves card',
+                      ),
+                      _StrideRow(
+                        threat: 'T — Tampering',
+                        mitigation: 'Card memory is tamper-resistant; JCOP secure element',
+                      ),
+                      _StrideRow(
+                        threat: 'R — Repudiation',
+                        mitigation: 'Signed transactions with counter stored on server',
+                      ),
+                      _StrideRow(
+                        threat: 'I — Info disclosure',
+                        mitigation: 'Only public key and signature leave the card',
+                      ),
+                      _StrideRow(
+                        threat: 'D — Denial of service',
+                        mitigation: 'PIN block after 5 fails; revocation via server flag',
+                      ),
+                      _StrideRow(
+                        threat: 'E — Elevation of privilege',
+                        mitigation: 'App-side UI can\'t bypass on-card PIN enforcement',
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // ── Card Lifecycle ────────────────────────────────────
+                  _SectionCard(
+                    icon: LucideIcons.creditCard,
+                    iconColor: _green,
+                    title: 'Card Lifecycle States',
+                    children: const [
+                      _InfoRow(label: 'PERSONALIZED', value: 'Keys generated, app installed'),
+                      _InfoRow(label: 'PIN_SET', value: 'User has set their 6-digit PIN'),
+                      _InfoRow(label: 'ENROLLED', value: 'Card linked to Bantay account'),
+                      _InfoRow(label: 'PIN_BLOCKED', value: 'Too many wrong PIN attempts'),
+                      _InfoRow(label: 'TERMINATED', value: 'Card revoked; no further use'),
+                    ],
+                  ),
+
+                ]),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
-  int? _expandedIdx;
-  List<String> _revokedCards = [];
-  bool _showRevokeInput = false;
-  final TextEditingController _revokeController = TextEditingController();
-  
-  final List<Map<String, dynamic>> _attacks = [
-    {
-      "attack": "MITM (Man-in-the-Middle)",
-      "protection": "Tokens are single-use and timestamp-bound. Intercepted tokens expire in 30 seconds and cannot be replayed.",
-      "protected": true,
-    },
-    {
-      "attack": "SIM Swap",
-      "protection": "Authentication requires physical possession of the NFC card — no SMS OTP dependency.",
-      "protected": true,
-    },
-    {
-      "attack": "Phishing",
-      "protection": "No credentials are entered. The NFC card holds the token — phishing pages can't steal what doesn't exist in a form.",
-      "protected": true,
-    },
-    {
-      "attack": "Token Replay",
-      "protection": "Tokens are single-use and cryptographically bound to a session ID and timestamp.",
-      "protected": true,
-    },
-    {
-      "attack": "Remote Card Cloning",
-      "protection": "Partial — card UID is validated, but without attestation certificates a sophisticated clone is theoretically possible.",
-      "protected": false,
-    },
-    {
-      "attack": "Physical Theft of Card Only",
-      "protection": "Protected — the card is only useful when paired with the app's token. Without the app, a stolen card cannot transact.",
-      "protected": true,
-    },
-  ];
+// ── Section Card ─────────────────────────────────────────────────────────
 
-  @override
-  void initState() {
-    super.initState();
-    _loadRevoked();
-  }
+class _SectionCard extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final List<Widget> children;
+  final Widget? customChild;
 
-  void _loadRevoked() async {
-    final list = await CardRevocationService.getRevokedCards();
-    setState(() => _revokedCards = list);
-  }
-
-  void _handleRevoke() async {
-    String id = _revokeController.text.trim();
-    if (id.isNotEmpty) {
-      await CardRevocationService.revokeCard(id);
-      _revokeController.clear();
-      setState(() => _showRevokeInput = false);
-      _loadRevoked();
-    }
-  }
-
-  void _handleUnrevoke(String id) async {
-    await CardRevocationService.unRevokeCard(id);
-    _loadRevoked();
-  }
+  const _SectionCard({
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.children,
+    this.customChild,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
+          colors: [
+            const Color(0xFF0369A1).withOpacity(0.18),
+            const Color(0xFF0891B2).withOpacity(0.10),
+            const Color(0xFF06B6D4).withOpacity(0.06),
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF0D0230), Color(0xFF040015)]
         ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFF0891B2).withOpacity(0.25)),
       ),
-      child: SafeArea(
-        child: Scaffold(
-          backgroundColor: Colors.transparent,
-          appBar: AppBar(
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            leading: IconButton(
-              icon: const Icon(LucideIcons.arrowLeft, color: Colors.white),
-              onPressed: () => Navigator.pop(context),
-            ),
-            title: const Text("Security Info", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-          ),
-          body: SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildRevocationPanel(),
-                const SizedBox(height: 16),
-                _buildSystemProperties(),
-                const SizedBox(height: 16),
-                _buildThreatModel(),
-                const SizedBox(height: 16),
-                _buildResearchNote(),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRevocationPanel() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(colors: [Color(0x14EF4444), Color(0x0DEF4444)]),
-        border: Border.all(color: const Color(0x33EF4444)),
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(LucideIcons.xCircle, color: Color(0xFFF87171), size: 16),
-              SizedBox(width: 8),
-              Text("Card Revocation", style: TextStyle(color: Color(0xFFF87171), fontSize: 14, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text("Lost your NFC card? Revoke it instantly. Any card with this ID will be rejected everywhere.", style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12)),
-          
-          if (_revokedCards.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Text("REVOKED CARDS", style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            ..._revokedCards.map((id) => Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(color: const Color(0x1AEF4444), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0x33EF4444))),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(id, style: const TextStyle(color: Color(0xFFFCA5A5), fontSize: 11, fontFamily: 'monospace')),
-                  GestureDetector(
-                    onTap: () => _handleUnrevoke(id),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.06), borderRadius: BorderRadius.circular(8)),
-                      child: const Text("Restore", style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
-                    ),
-                  )
-                ],
-              ),
-            )),
-          ],
-
-          const SizedBox(height: 16),
-          if (_showRevokeInput)
-            Column(
-              children: [
-                TextField(
-                  controller: _revokeController,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  decoration: InputDecoration(
-                    hintText: "Enter Card ID to revoke",
-                    hintStyle: const TextStyle(color: Colors.white30),
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.07),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => setState(() { _showRevokeInput = false; _revokeController.clear(); }),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(12)),
-                          alignment: Alignment.center,
-                          child: const Text("Cancel", style: TextStyle(color: Colors.white54)),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: _handleRevoke,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          decoration: BoxDecoration(color: const Color(0xB2EF4444), borderRadius: BorderRadius.circular(12)),
-                          alignment: Alignment.center,
-                          child: const Text("🔒 Revoke", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                        ),
-                      ),
-                    ),
-                  ],
-                )
-              ],
-            )
-          else
-            GestureDetector(
-              onTap: () => setState(() => _showRevokeInput = true),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                decoration: BoxDecoration(
-                  color: const Color(0x26EF4444),
-                  border: Border.all(color: const Color(0x4DEF4444)),
-                  borderRadius: BorderRadius.circular(12)
-                ),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(LucideIcons.lock, color: Color(0xFFF87171), size: 14),
-                    SizedBox(width: 6),
-                    Text("Lock / Revoke a Card", style: TextStyle(color: Color(0xFFF87171), fontSize: 13, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-              ),
-            )
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSystemProperties() {
-    final props = [
-      {"label": "Auth Factor", "val": "Something you have (NFC)", "icon": LucideIcons.shield, "color": const Color(0xFF34D399)},
-      {"label": "Token Lifetime", "val": "5 mins or single-use", "icon": LucideIcons.lock, "color": const Color(0xFF38BDF8)},
-      {"label": "Token Binding", "val": "Session + Time + Card", "icon": LucideIcons.checkCircle, "color": const Color(0xFF06B6D4)},
-    ];
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white.withOpacity(0.04), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white.withOpacity(0.08))),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(LucideIcons.eye, color: Color(0xFF38BDF8), size: 14),
-              SizedBox(width: 8),
-              Text("System Properties", style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          ...props.map((p) => Padding(
-            padding: const EdgeInsets.only(bottom: 12.0),
-            child: Row(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
                 Container(
-                  width: 28, height: 28,
-                  decoration: BoxDecoration(color: (p["color"] as Color).withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-                  child: Icon(p["icon"] as IconData, size: 13, color: p["color"] as Color),
+                  width: 36, height: 36,
+                  decoration: BoxDecoration(
+                    color: iconColor.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: iconColor.withOpacity(0.3)),
+                  ),
+                  child: Icon(icon, color: iconColor, size: 18),
                 ),
                 const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(p["label"] as String, style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11)),
-                    Text(p["val"] as String, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                  ],
-                )
+                Text(title, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
               ],
             ),
-          ))
+            if (children.isNotEmpty || customChild != null) ...[
+              const SizedBox(height: 16),
+              const Divider(color: Color(0x1AFFFFFF), height: 1),
+              const SizedBox(height: 16),
+              if (customChild != null) customChild!,
+              ...children,
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Info Row ──────────────────────────────────────────────────────────────
+
+class _InfoRow extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _InfoRow({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 130,
+            child: Text(label, style: TextStyle(color: Colors.white.withOpacity(0.45), fontSize: 12)),
+          ),
+          Expanded(
+            child: Text(value, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
+          ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildThreatModel() {
+// ── STRIDE Row ────────────────────────────────────────────────────────────
+
+class _StrideRow extends StatelessWidget {
+  final String threat;
+  final String mitigation;
+
+  const _StrideRow({required this.threat, required this.mitigation});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(threat, style: const TextStyle(color: Color(0xFFF87171), fontSize: 12, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 2),
+          Text(mitigation, style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12)),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Auth Tiers Table ──────────────────────────────────────────────────────
+
+class _AuthTiersTable extends StatelessWidget {
+  const _AuthTiersTable();
+
+  static const _teal = Color(0xFF06B6D4);
+  static const _green = Color(0xFF34D399);
+  static const _amber = Color(0xFFF59E0B);
+  static const _red = Color(0xFFF87171);
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = [
+      _TierRow('Micro', '< ₱100', 'Tap-and-go', _green),
+      _TierRow('Low', '₱100–₱500', 'Card tap', _teal),
+      _TierRow('Medium', '₱500–₱5000', 'Card + PIN', _amber),
+      _TierRow('High', '> ₱5000', 'Card + PIN + OTP', _red),
+    ];
+
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Row(
+        // Header row
+        Row(
           children: [
-            Icon(LucideIcons.info, color: Color(0xFF38BDF8), size: 14),
-            SizedBox(width: 8),
-            Text("Threat Model", style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
-            SizedBox(width: 8),
-            Text("— tap to expand", style: TextStyle(color: Colors.white24, fontSize: 11)),
+            _cell('Tier', flex: 2, isHeader: true),
+            _cell('Amount', flex: 3, isHeader: true),
+            _cell('Auth', flex: 4, isHeader: true),
           ],
         ),
-        const SizedBox(height: 12),
-        ..._attacks.asMap().entries.map((e) {
-          int idx = e.key;
-          var item = e.value;
-          bool isExpanded = _expandedIdx == idx;
-          bool protected = item["protected"] as bool;
-          
-          return GestureDetector(
-            onTap: () => setState(() => _expandedIdx = isExpanded ? null : idx),
-            child: Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: protected ? const Color(0x0F10B981) : const Color(0x0FEF4444),
-                border: Border.all(color: protected ? const Color(0x3310B981) : const Color(0x33EF4444)),
-                borderRadius: BorderRadius.circular(16)
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Icon(protected ? LucideIcons.checkCircle : LucideIcons.alertTriangle, color: protected ? const Color(0xFF34D399) : const Color(0xFFF87171), size: 14),
-                      const SizedBox(width: 8),
-                      Expanded(child: Text(item["attack"] as String, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold))),
-                      Icon(isExpanded ? LucideIcons.chevronUp : LucideIcons.chevronDown, color: Colors.white30, size: 14),
-                    ],
+        const SizedBox(height: 6),
+        ...rows.map((r) => Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: r.color.withOpacity(0.10),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: r.color.withOpacity(0.3)),
                   ),
-                  if (isExpanded) ...[
-                    const SizedBox(height: 8),
-                    Text(item["protection"] as String, style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11, height: 1.5)),
-                  ]
-                ],
+                  child: Text(r.tier, style: TextStyle(color: r.color, fontSize: 11, fontWeight: FontWeight.w700)),
+                ),
               ),
-            ),
-          );
-        }),
+              const SizedBox(width: 6),
+              Expanded(flex: 3, child: Text(r.amount, style: const TextStyle(color: Colors.white, fontSize: 11))),
+              Expanded(flex: 4, child: Text(r.auth, style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 11))),
+            ],
+          ),
+        )),
       ],
     );
   }
 
-  Widget _buildResearchNote() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(colors: [Color(0x1A0891B2), Color(0x1406B6D4)]),
-        border: Border.all(color: const Color(0x330891B2)),
-        borderRadius: BorderRadius.circular(24)
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(LucideIcons.info, color: Color(0xFF38BDF8), size: 13),
-              SizedBox(width: 8),
-              Text("Research Transparency Note", style: TextStyle(color: Color(0xFF38BDF8), fontSize: 12, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text("This system is a research prototype. It does not implement SCP03 Secure Channel Protocol or formal card attestation certificates. The NFC communication channel is not encrypted at the transport layer.", style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11, height: 1.6)),
-        ],
+  Widget _cell(String text, {required int flex, bool isHeader = false}) {
+    return Expanded(
+      flex: flex,
+      child: Text(
+        text,
+        style: TextStyle(
+          color: isHeader ? Colors.white38 : Colors.white,
+          fontSize: 10,
+          fontWeight: isHeader ? FontWeight.w600 : FontWeight.normal,
+        ),
       ),
     );
   }
+}
+
+class _TierRow {
+  final String tier;
+  final String amount;
+  final String auth;
+  final Color color;
+  const _TierRow(this.tier, this.amount, this.auth, this.color);
 }

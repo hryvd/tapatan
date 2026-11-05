@@ -4,6 +4,7 @@ import '../utils/lucide_icons.dart';
 import '../providers/user_provider.dart';
 import 'home_screen.dart';
 import 'virtual_cards_screen.dart';
+import 'sare_screen.dart';
 import 'analytics_screen.dart';
 import 'profile_screen.dart';
 import 'nfc_flow_screen.dart';
@@ -25,6 +26,7 @@ class _MainShellState extends ConsumerState<MainShell>
   static const _tabs = [
     {'label': 'Home', 'icon': LucideIcons.home},
     {'label': 'Cards', 'icon': LucideIcons.creditCard},
+    {'label': 'Sar-E', 'icon': LucideIcons.store},
     {'label': 'Analytics', 'icon': LucideIcons.barChart2},
     {'label': 'Profile', 'icon': LucideIcons.user},
   ];
@@ -42,9 +44,43 @@ class _MainShellState extends ConsumerState<MainShell>
     setState(() => _showNfcUnlock = false);
   }
 
-  void _handleTransactionComplete() {
+  void _handleTransactionComplete(double amount) {
+    final user = ref.read(userProvider);
+    double paidAmount = amount;
+    String merchantName = 'NFC POS Terminal';
+
+    if (user.sarePendingOrder != null) {
+      final order = user.sarePendingOrder!;
+      paidAmount = order.totalAmount;
+      merchantName = order.merchant;
+      ref.read(userProvider.notifier).sendMoney(
+        order.totalAmount,
+        recipient: order.merchant,
+        type: 'nfc',
+      );
+      ref.read(userProvider.notifier).clearSarEOrder();
+    } else if (amount > 0) {
+      ref.read(userProvider.notifier).sendMoney(
+        amount,
+        recipient: 'NFC POS Payment',
+        type: 'nfc',
+      );
+    }
     ref.read(userProvider.notifier).completeTransaction();
     setState(() => _showNfcOverlay = false);
+
+    if (mounted && paidAmount > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Card Read & Acknowledged · Payment Approved (₱${paidAmount.toStringAsFixed(2)} to $merchantName)',
+          ),
+          backgroundColor: const Color(0xFF059669),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+    }
   }
 
   Widget _currentScreen() {
@@ -57,17 +93,29 @@ class _MainShellState extends ConsumerState<MainShell>
           },
           onNavigateTab: (tab) {
             if (tab == 'cards') setState(() => _currentIndex = 1);
+            if (tab == 'sare') setState(() => _currentIndex = 2);
+            if (tab == 'analytics') setState(() => _currentIndex = 3);
+            if (tab == 'profile') setState(() => _currentIndex = 4);
           },
         );
       case 1:
         return const VirtualCardsScreen();
       case 2:
-        return const AnalyticsScreen();
+        return SarEScreen(
+          onNavigateHome: () => setState(() => _currentIndex = 0),
+          onCheckoutWithCard: () => setState(() {
+            _currentIndex = 0;
+            _showNfcOverlay = true;
+          }),
+        );
       case 3:
+        return const AnalyticsScreen();
+      case 4:
         return ProfileScreen(
           onSignOut: () => Navigator.pushReplacementNamed(context, '/auth'),
           onNavigate: (tab) {
             if (tab == 'cards') setState(() => _currentIndex = 1);
+            if (tab == 'sare') setState(() => _currentIndex = 2);
           },
         );
       default:
@@ -172,7 +220,7 @@ class _MainShellState extends ConsumerState<MainShell>
                       behavior: HitTestBehavior.opaque,
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 300),
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(20),
                           gradient: isActive
@@ -191,7 +239,7 @@ class _MainShellState extends ConsumerState<MainShell>
                           children: [
                             Icon(
                               icon,
-                              size: 20,
+                              size: 19,
                               color: isActive
                                   ? const Color(0xFF38BDF8)
                                   : Colors.white.withOpacity(0.3),
@@ -200,7 +248,7 @@ class _MainShellState extends ConsumerState<MainShell>
                             Text(
                               label,
                               style: TextStyle(
-                                fontSize: 10,
+                                fontSize: 9.5,
                                 fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
                                 color: isActive
                                     ? const Color(0xFF38BDF8)
@@ -225,6 +273,7 @@ class _MainShellState extends ConsumerState<MainShell>
                 duration: const Duration(milliseconds: 300),
                 child: NfcUnlockScreen(
                   userName: user.name,
+                  cardId: user.cardId,
                   onUnlocked: _handleCardUnlocked,
                   onBack: _closeNfcUnlock,
                 ),
@@ -245,9 +294,12 @@ class _MainShellState extends ConsumerState<MainShell>
                 child: NfcFlowScreen(
                   onClose: _closeNfcOverlay,
                   onTransactionComplete: _handleTransactionComplete,
+                  cardId: user.cardId,
+                  pendingOrder: user.sarePendingOrder,
                 ),
               ),
             ),
+
         ],
       ),
     );

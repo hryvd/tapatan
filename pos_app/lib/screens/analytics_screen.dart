@@ -1,0 +1,1036 @@
+import 'dart:io';
+import 'dart:math' as math;
+
+import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
+import 'package:open_file/open_file.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:sqflite/sqflite.dart' hide Transaction;
+
+import '../application/analytics_provider.dart';
+import '../application/inventory_provider.dart';
+import '../application/locale_provider.dart';
+import '../data/local/database.dart';
+import '../data/local/daos/transaction_dao.dart';
+import '../domain/entities/sales_summary.dart';
+import '../domain/entities/transaction.dart';
+import '../domain/entities/product.dart';
+import '../theme/app_theme.dart';
+import '../widgets/glass_container.dart';
+
+class AnalyticsScreen extends ConsumerWidget {
+  const AnalyticsScreen({super.key, required this.onOpenTransactions});
+
+  final VoidCallback onOpenTransactions;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return ref.watch(analyticsProvider).when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (Object e, _) => Center(child: Text('Error: $e')),
+          data: (AnalyticsState state) => _AnalyticsContent(
+              state: state, onOpenTransactions: onOpenTransactions, locale: ref.watch(localeProvider)),
+        );
+  }
+}
+
+class _AnalyticsContent extends ConsumerWidget {
+  const _AnalyticsContent({
+    required this.state,
+    required this.onOpenTransactions,
+    required this.locale,
+  });
+
+  final AnalyticsState state;
+  final VoidCallback onOpenTransactions;
+  final AppLocale locale;
+
+  Widget _buildChart(List<Map<String, dynamic>> rawData, AppColors c, AnalyticsPeriod period) {
+    if (rawData.isEmpty) return const SizedBox.shrink();
+
+    // fl_chart requires at least 2 points for a line. 
+    // If there is only 1 point (e.g. Today view with no prior history or just a single day), 
+    // we duplicate it so we can draw a flat line or at least a point.
+    final List<Map<String, dynamic>> data = List.from(rawData);
+    if (data.length == 1) {
+      data.add(data.first);
+    }
+
+    final double rawMaxY = data
+        .map((Map<String, dynamic> d) =>
+            math.max((d['revenue'] as num).toDouble(), (d['cogs'] as num).toDouble()))
+        .reduce(math.max) * 1.15;
+    final double maxY = math.max(rawMaxY, 1.0); // Ensure we always render
+
+    final List<FlSpot> revSpots = [];
+    final List<FlSpot> cogsSpots = [];
+
+    for (int i = 0; i < data.length; i++) {
+      revSpots.add(FlSpot(i.toDouble(), (data[i]['revenue'] as num).toDouble()));
+      cogsSpots.add(FlSpot(i.toDouble(), (data[i]['cogs'] as num).toDouble()));
+    }
+
+    return LineChart(
+      LineChartData(
+        minX: 0,
+        maxX: (data.length - 1).toDouble(),
+        minY: 0,
+        maxY: maxY,
+        gridData: FlGridData(
+          show: true,
+          drawVerticalLine: false,
+          horizontalInterval: maxY / 4,
+          getDrawingHorizontalLine: (value) => FlLine(
+            color: c.border.withValues(alpha: 0.45),
+            strokeWidth: 0.8,
+          ),
+        ),
+        titlesData: FlTitlesData(
+          show: true,
+          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          leftTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 48,
+              interval: maxY / 4,
+              getTitlesWidget: (value, meta) {
+                // Show labels at 25%, 50%, 75%, 100% of max
+                if (value == 0) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: Text(
+                    NumberFormat.compact().format(value),
+                    style: TextStyle(color: c.textTertiary, fontSize: 10),
+                    textAlign: TextAlign.right,
+                  ),
+                );
+              },
+            ),
+          ),
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 22,
+              interval: math.max(1, (data.length / 5).floorToDouble()),
+              getTitlesWidget: (value, meta) {
+                final int idx = value.toInt();
+                if (idx < 0 || idx >= data.length) return const SizedBox.shrink();
+                final String dayStr = data[idx]['day'] as String;
+                DateTime? dt = DateTime.tryParse(dayStr);
+                if (dt == null) return const SizedBox.shrink();
+                
+                String label = DateFormat('MMM d').format(dt);
+                if (period == AnalyticsPeriod.daily) {
+                  label = 'Today';
+                }
+                
+                return Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Text(
+                    label,
+                    style: TextStyle(color: c.textTertiary, fontSize: 10),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        borderData: FlBorderData(show: false),
+        lineBarsData: [
+          LineChartBarData(
+            spots: revSpots,
+            isCurved: false,
+            color: c.primary,
+            barWidth: 2.5,
+            isStrokeCapRound: true,
+            dotData: FlDotData(
+              show: true,
+              getDotPainter: (spot, percent, bar, index) => FlDotCirclePainter(
+                radius: 3,
+                color: c.primary,
+                strokeColor: c.surface,
+                strokeWidth: 1.5,
+              ),
+            ),
+            belowBarData: BarAreaData(
+              show: true,
+              color: c.primary.withValues(alpha: 0.06),
+            ),
+          ),
+          LineChartBarData(
+            spots: cogsSpots,
+            isCurved: false,
+            color: Colors.deepOrange,
+            barWidth: 2.5,
+            isStrokeCapRound: true,
+            dotData: FlDotData(
+              show: true,
+              getDotPainter: (spot, percent, bar, index) => FlDotCirclePainter(
+                radius: 3,
+                color: Colors.deepOrange,
+                strokeColor: c.surface,
+                strokeWidth: 1.5,
+              ),
+            ),
+            belowBarData: BarAreaData(show: false),
+          ),
+        ],
+        lineTouchData: LineTouchData(
+          touchTooltipData: LineTouchTooltipData(
+            getTooltipColor: (_) => c.surface,
+            getTooltipItems: (List<LineBarSpot> touchedSpots) {
+              return touchedSpots.map((LineBarSpot touchedSpot) {
+                final bool isRev = touchedSpot.barIndex == 0;
+                return LineTooltipItem(
+                  '${isRev ? "Rev" : "COGS"}: ₱${NumberFormat("#,##0.00").format(touchedSpot.y)}',
+                  TextStyle(
+                    color: isRev ? c.primary : Colors.deepOrange,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                );
+              }).toList();
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _exportPdf(BuildContext context) async {
+    final pw.Document doc = pw.Document();
+    doc.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        build: (pw.Context ctx) {
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: <pw.Widget>[
+              pw.Text('SarE Sales Report',
+                  style: pw.TextStyle(
+                      fontSize: 20, fontWeight: pw.FontWeight.bold)),
+              pw.Text(
+                  'Period: ${state.period.label}  •  Generated: ${DateFormat('MMM d, y HH:mm').format(DateTime.now())}',
+                  style: const pw.TextStyle(fontSize: 10)),
+              pw.SizedBox(height: 16),
+              pw.TableHelper.fromTextArray(
+                headers: <String>[
+                  'Metric',
+                  'Value',
+                ],
+                data: <List<String>>[
+                  <String>[
+                    'Revenue',
+                    'PHP ${state.revenue.toStringAsFixed(2)}'
+                  ],
+                  <String>['COGS', 'PHP ${state.cogs.toStringAsFixed(2)}'],
+                  <String>[
+                    'Gross Profit',
+                    'PHP ${state.grossProfit.toStringAsFixed(2)}'
+                  ],
+                  <String>[
+                    'Profit Margin',
+                    '${state.profitMargin.toStringAsFixed(1)}%'
+                  ],
+                  <String>['Transactions', '${state.txnCount}'],
+                ],
+              ),
+              pw.SizedBox(height: 20),
+              pw.Text('Top Products',
+                  style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+              pw.SizedBox(height: 8),
+              pw.TableHelper.fromTextArray(
+                headers: <String>['Product', 'Qty Sold', 'Revenue'],
+                data: state.topProducts
+                    .map((TopProduct p) => <String>[
+                          p.name,
+                          '${p.totalQty}',
+                          'PHP ${p.totalRevenue.toStringAsFixed(2)}',
+                        ])
+                    .toList(),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    // Save PDF to device storage instead of opening print dialog
+    try {
+      final Directory dir = await getApplicationDocumentsDirectory();
+      final String fileName =
+          'SarE_Report_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.pdf';
+      final String filePath = '${dir.path}/$fileName';
+      final File file = File(filePath);
+      await file.writeAsBytes(await doc.save());
+      await OpenFile.open(filePath);
+      if (context.mounted) {
+        showDialog<void>(
+          context: context,
+          builder: (BuildContext ctx) => AlertDialog(
+            icon: Icon(Icons.check_circle_rounded,
+                color: appColors(ctx).info, size: 36),
+            title: const Text('PDF Saved'),
+            content: Text('Report saved to:\n$filePath'),
+            actions: <Widget>[
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        showDialog<void>(
+          context: context,
+          builder: (BuildContext ctx) => AlertDialog(
+            icon: Icon(Icons.error_outline,
+                color: appColors(ctx).error, size: 36),
+            title: const Text('PDF Error'),
+            content: Text('Could not save PDF: $e'),
+            actions: <Widget>[
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
+    }
+  }
+
+  /// Format payment method for display
+  String _formatPaymentMethod(String method) {
+    // Handle provider-specific format: 'ewallet:GCash' → 'GCash'
+    if (method.startsWith('ewallet:')) {
+      return method.substring(8);
+    }
+    switch (method) {
+      case 'cash':
+        return t(locale, 'cash');
+      case 'ewallet':
+        return t(locale, 'ewallet_qr');
+      default:
+        return method;
+    }
+  }
+
+  /// Show transaction detail with line items
+  Future<void> _showTransactionDetail(
+      BuildContext context, Transaction txn) async {
+    final TransactionDao dao = TransactionDao();
+    final List<TransactionLineItem> lineItems =
+        await dao.getLineItems(txn.transactionId);
+    final PaymentRecord? payment = await _getPayment(txn.transactionId);
+
+    if (!context.mounted) return;
+
+    final AppColors c = appColors(context);
+    showDialog<void>(
+      context: context,
+      builder: (BuildContext ctx) => AlertDialog(
+        contentPadding: EdgeInsets.zero,
+        content: SizedBox(
+          width: 340,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              // Header
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                decoration: BoxDecoration(
+                  color: c.primary,
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(28)),
+                ),
+                child: Column(children: <Widget>[
+                  const Icon(Icons.receipt_long_outlined,
+                      color: Colors.white, size: 28),
+                  const SizedBox(height: 6),
+                  Text(
+                    t(locale, 'transaction_detail'),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                    ),
+                  ),
+                  Text(
+                    DateFormat('MMM d, y – h:mm a').format(txn.timestamp),
+                    style:
+                        const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                ]),
+              ),
+
+              // Line items
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      if (lineItems.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Text(t(locale, 'no_line_items'),
+                              style: TextStyle(
+                                  color: c.textTertiary, fontSize: 13)),
+                        )
+                      else
+                        ...lineItems.map((TransactionLineItem li) {
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Row(children: <Widget>[
+                              Expanded(
+                                child: Text(
+                                  '${li.qty}× ${li.productName ?? li.productId}',
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                              ),
+                              Text(
+                                '₱${li.subtotal.toStringAsFixed(2)}',
+                                style: TextStyle(
+                                  color: c.primary,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ]),
+                          );
+                        }),
+                      Divider(color: c.border, height: 20),
+                      // Payment method
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: <Widget>[
+                          Text(t(locale, 'payment'),
+                              style: const TextStyle(fontSize: 12)),
+                          Text(
+                            _formatPaymentMethod(
+                                payment?.method ?? txn.paymentMethod),
+                            style: const TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      // Total
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: <Widget>[
+                          Text('TOTAL',
+                              style: TextStyle(
+                                  color: c.primary,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 16)),
+                          Text(
+                            '₱${txn.totalAmount.toStringAsFixed(2)}',
+                            style: TextStyle(
+                                color: c.primary,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 18),
+                          ),
+                        ],
+                      ),
+                      if (txn.changeDue > 0) ...<Widget>[
+                        const SizedBox(height: 4),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: <Widget>[
+                            Text('Change',
+                                style:
+                                    TextStyle(color: c.info, fontSize: 12)),
+                            Text(
+                              '₱${txn.changeDue.toStringAsFixed(2)}',
+                              style: TextStyle(
+                                  color: c.info,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      // Status
+                      Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: txn.status == 'completed'
+                                ? c.info.withValues(alpha: 0.12)
+                                : c.warning.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            txn.status.toUpperCase(),
+                            style: TextStyle(
+                              color: txn.status == 'completed'
+                                  ? c.info
+                                  : c.warning,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Close
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: c.primary,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('Close'),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<PaymentRecord?> _getPayment(String transactionId) async {
+    // Get payment record from DB
+    final Database db = await AppDatabase.instance;
+    final List<Map<String, dynamic>> rows = await db.query(
+      'payment_records',
+      where: 'transaction_id = ?',
+      whereArgs: <String>[transactionId],
+    );
+    if (rows.isEmpty) return null;
+    return PaymentRecord.fromMap(rows.first);
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppColors c = appColors(context);
+    final double topPadding = MediaQuery.paddingOf(context).top + kToolbarHeight - 28;
+
+    return RefreshIndicator(
+      onRefresh: () async => ref.read(analyticsProvider.notifier).refresh(),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsets.fromLTRB(14, topPadding, 14, 200),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            // Header
+            Row(children: <Widget>[
+              const Icon(Icons.analytics_outlined),
+              const SizedBox(width: 8),
+              Text(t(locale, 'tab_analytics'), style: Theme.of(context).textTheme.titleLarge),
+              const Spacer(),
+              // Refresh
+              IconButton(
+                onPressed: () => ref.read(analyticsProvider.notifier).refresh(),
+                icon: const Icon(Icons.refresh),
+                tooltip: t(locale, 'refresh'),
+              ),
+              // PDF export
+              IconButton(
+                onPressed: () => _exportPdf(context),
+                icon: const Icon(Icons.picture_as_pdf_outlined),
+                tooltip: t(locale, 'export_pdf'),
+              ),
+            ]),
+            const SizedBox(height: 10),
+
+            // Period filter
+            SizedBox(
+              height: 38,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: AnalyticsPeriod.values.map((AnalyticsPeriod p) {
+                  final bool selected = state.period.label == p.label;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: ChoiceChip(
+                      label: Text(p.label),
+                      selected: selected,
+                      onSelected: (_) =>
+                          ref.read(analyticsProvider.notifier).setPeriod(p),
+                      selectedColor: c.primary.withValues(alpha: 0.15),
+                      side: BorderSide(color: selected ? c.primary : c.border),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // KPI cards
+            Row(children: <Widget>[
+              _KpiCard(
+                label: 'Revenue',
+                value: 'PHP ${state.revenue.toStringAsFixed(2)}',
+                color: c.primary,
+              ),
+              const SizedBox(width: 8),
+              _KpiCard(
+                label: 'Profit',
+                value: 'PHP ${state.grossProfit.toStringAsFixed(2)}',
+                color: c.info,
+              ),
+            ]),
+            const SizedBox(height: 8),
+            Row(children: <Widget>[
+              _KpiCard(
+                label: 'COGS',
+                value: 'PHP ${state.cogs.toStringAsFixed(2)}',
+                color: Colors.deepOrange,
+              ),
+              const SizedBox(width: 8),
+              _KpiCard(
+                label: 'Transactions',
+                value: '${state.txnCount}',
+                color: c.accent,
+              ),
+            ]),
+            const SizedBox(height: 8),
+            Row(children: <Widget>[
+              _KpiCard(
+                label: 'Avg Value (ATV)',
+                value: 'PHP ${state.averageTransactionValue.toStringAsFixed(2)}',
+                color: c.success,
+              ),
+              const SizedBox(width: 8),
+              _KpiCard(
+                label: 'Best Day',
+                value: state.bestSellingDay != null && state.bestSellingDay!['revenue'] > 0
+                    ? '${DateFormat('MMM d').format(DateTime.parse(state.bestSellingDay!['day']))}\n(₱${(state.bestSellingDay!['revenue'] as num).toStringAsFixed(0)})'
+                    : '-',
+                color: c.glassGold,
+              ),
+            ]),
+            const SizedBox(height: 10),
+
+            // Chart
+            // Chart
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Row(
+                      children: <Widget>[
+                        Text(t(locale, 'revenue_vs_cogs'),
+                            style: const TextStyle(fontWeight: FontWeight.w600)),
+                        const SizedBox(width: 6),
+                        Tooltip(
+                          message: t(locale, 'cogs_tooltip'),
+                          triggerMode: TooltipTriggerMode.tap,
+                          child: Icon(Icons.info_outline,
+                              size: 16, color: c.textTertiary),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (state.chartData.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 24),
+                        child: Center(
+                          child: Text(t(locale, 'no_sales_yet'),
+                              style: TextStyle(
+                                  color: c.textTertiary, fontSize: 13)),
+                        ),
+                      )
+                    else
+                      SizedBox(
+                        height: 220,
+                        width: double.infinity,
+                        child: _buildChart(state.chartData, c, state.period),
+                      ),
+                    const SizedBox(height: 8),
+                    Row(children: <Widget>[
+                      Container(width: 12, height: 3, color: c.primary),
+                      const SizedBox(width: 4),
+                      Text(t(locale, 'revenue'),
+                          style:
+                              TextStyle(color: c.textSecondary, fontSize: 11)),
+                      const SizedBox(width: 12),
+                      Container(width: 12, height: 3, color: Colors.deepOrange),
+                      const SizedBox(width: 4),
+                      Text(t(locale, 'cogs'),
+                          style:
+                              TextStyle(color: c.textSecondary, fontSize: 11)),
+                    ]),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // Top products
+            if (state.topProducts.isNotEmpty) ...<Widget>[
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      const Text('Top Products'),
+                      const SizedBox(height: 8),
+                      ...state.topProducts
+                          .take(5)
+                          .toList()
+                          .asMap()
+                          .entries
+                          .map((MapEntry<int, TopProduct> entry) {
+                        final TopProduct p = entry.value;
+                        final double maxRevenue =
+                            state.topProducts.first.totalRevenue;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(children: <Widget>[
+                            SizedBox(
+                              width: 20,
+                              child: Text(
+                                '${entry.key + 1}.',
+                                style: TextStyle(
+                                    color: c.textTertiary, fontSize: 11),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 3,
+                              child: Text(p.name,
+                                  style: const TextStyle(fontSize: 13),
+                                  overflow: TextOverflow.ellipsis),
+                            ),
+                            Expanded(
+                              flex: 4,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: LinearProgressIndicator(
+                                  value: maxRevenue > 0
+                                      ? p.totalRevenue / maxRevenue
+                                      : 0,
+                                  minHeight: 8,
+                                  valueColor:
+                                      AlwaysStoppedAnimation<Color>(c.primary),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text('${p.totalQty}x',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 12,
+                                    color: c.primary)),
+                          ]),
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
+
+            // Category Breakdown
+            if (state.categoryBreakdown.isNotEmpty) ...[
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.pie_chart_outline, size: 20),
+                          SizedBox(width: 8),
+                          Text('Category Breakdown', style: TextStyle(fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      ...state.categoryBreakdown.map((cat) {
+                        final String name = cat['category_name'] as String;
+                        final double rev = (cat['total_revenue'] as num).toDouble();
+                        final double pct = state.revenue > 0 ? (rev / state.revenue) * 100 : 0;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                                  Text('₱${rev.toStringAsFixed(0)} (${pct.toStringAsFixed(1)}%)', 
+                                    style: TextStyle(color: c.textSecondary, fontSize: 12)),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: LinearProgressIndicator(
+                                  value: pct / 100,
+                                  minHeight: 6,
+                                  valueColor: AlwaysStoppedAnimation<Color>(c.primary.withValues(alpha: 0.8)),
+                                  backgroundColor: c.border,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
+
+            // AI Insights section
+            _AiInsightsSection(products: ref.watch(inventoryProvider).value?.products ?? []),
+            const SizedBox(height: 10),
+
+            // Recent transactions
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.receipt_long_outlined),
+                title: Text(t(locale, 'recent_transactions')),
+                subtitle: Text('${state.txnCount} ${t(locale, 'transactions').toLowerCase()}'),
+                trailing: TextButton(
+                  onPressed: onOpenTransactions,
+                  child: Text(t(locale, 'view_all')),
+                ),
+              ),
+            ),
+
+            // Recent list preview
+            if (state.recentTransactions.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 8),
+              ...state.recentTransactions.take(5).map((Transaction t) {
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  child: ListTile(
+                    dense: true,
+                    onTap: () => _showTransactionDetail(context, t),
+                    leading: Icon(
+                      t.paymentMethod == 'cash'
+                          ? Icons.payments_outlined
+                          : Icons.qr_code_outlined,
+                      color: c.primary,
+                      size: 20,
+                    ),
+                    title: Text('PHP ${t.totalAmount.toStringAsFixed(2)}',
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text(
+                      '${DateFormat('MMM d, h:mm a').format(t.timestamp)}  •  ${_formatPaymentMethod(t.paymentMethod)}',
+                      style: TextStyle(color: c.textSecondary, fontSize: 11),
+                    ),
+                    trailing: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: t.status == 'completed'
+                            ? c.info.withValues(alpha: 0.12)
+                            : c.warning.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        t.status,
+                        style: TextStyle(
+                          color: t.status == 'completed' ? c.info : c.warning,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _KpiCard extends StatelessWidget {
+  const _KpiCard({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GlassContainer(
+        borderRadius: 16,
+        padding: const EdgeInsets.all(14),
+        glowColor: color,
+        glowRadius: 18,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(value,
+                style: TextStyle(
+                    color: color, fontWeight: FontWeight.w800, fontSize: 16)),
+            const SizedBox(height: 3),
+            Text(label,
+                style: const TextStyle(
+                    color: GlassColors.textSub, fontSize: 11,
+                    fontWeight: FontWeight.w500)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── AI Insights section ──────────────────────────────────────────────────────
+
+class _AiInsightsSection extends StatelessWidget {
+  const _AiInsightsSection({required this.products});
+  final List<dynamic> products;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<DemandInsight> insights = computeDemandInsights(
+        products.whereType<Product>().toList());
+    final AppColors c = appColors(context);
+
+    return GlassContainer(
+      borderRadius: 20,
+      padding: const EdgeInsets.all(16),
+      glowColor: GlassColors.gold,
+      glowRadius: 20,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Row(
+            children: [
+              Icon(Icons.auto_awesome_rounded,
+                  color: GlassColors.gold, size: 18),
+              SizedBox(width: 8),
+              Text('AI Demand Insights',
+                  style: TextStyle(
+                      color: GlassColors.text,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15)),
+              Spacer(),
+              GlowBadge(label: 'LIVE', color: GlassColors.success),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text('Based on stock turnover & cost margins',
+              style:
+                  TextStyle(color: GlassColors.textSub, fontSize: 11)),
+          const SizedBox(height: 14),
+          if (insights.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Text('Add products to see AI insights.',
+                  style: TextStyle(
+                      color: GlassColors.textMuted, fontSize: 12)),
+            )
+          else
+            ...insights.map((DemandInsight ins) {
+              final Color demandColor = ins.demandLevel == 'High'
+                  ? GlassColors.error
+                  : ins.demandLevel == 'Medium'
+                      ? GlassColors.warning
+                      : GlassColors.success;
+              final Color trendColor = ins.priceTrend == 'Rising'
+                  ? GlassColors.error
+                  : ins.priceTrend == 'Stable'
+                      ? GlassColors.info
+                      : GlassColors.success;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            ins.productName,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w600, fontSize: 13),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        GlowBadge(
+                            label: ins.demandLevel,
+                            color: demandColor,
+                            icon: ins.demandLevel == 'High'
+                                ? Icons.trending_up
+                                : ins.demandLevel == 'Medium'
+                                    ? Icons.trending_flat
+                                    : Icons.trending_down),
+                        const SizedBox(width: 4),
+                        GlowBadge(
+                            label: ins.priceTrend,
+                            color: trendColor,
+                            icon: ins.priceTrend == 'Rising'
+                                ? Icons.arrow_upward
+                                : ins.priceTrend == 'Falling'
+                                    ? Icons.arrow_downward
+                                    : Icons.remove),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    // Confidence bar
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: ins.confidence,
+                        minHeight: 4,
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(demandColor),
+                        backgroundColor:
+                            demandColor.withValues(alpha: 0.15),
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(ins.suggestion,
+                        style: const TextStyle(
+                            color: GlassColors.textSub, fontSize: 11)),
+                  ],
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+}
+
+

@@ -380,10 +380,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ? const Color(0xFF34D399).withOpacity(0.3)
             : Colors.white.withOpacity(0.07);
     final String label = user.sessionTxnDone
-        ? 'Java Card  Â·  Transaction used â€” re-tap to rearm'
+        ? 'NFC Card  ·  Transaction used — re-tap to rearm'
         : user.cardArmed
-            ? 'Java Card  Â·  Armed â€” 1 transaction ready'
-            : 'Java Card  Â·  Not activated';
+            ? 'NFC Card  ·  Armed — 1 transaction ready'
+            : 'NFC Card  ·  Not activated';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
@@ -504,7 +504,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       style: TextStyle(
                           color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800)),
                   SizedBox(height: 2),
-                  Text('Tap Java Card to arm for payment',
+                  Text('Tap NFC card to arm for payment',
                       style:
                           TextStyle(color: Color(0x99FFFFFF), fontSize: 11)),
                 ],
@@ -799,6 +799,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 130),
         children: [
 
+          // 0. Sar-E Pending Order banner (if any)
+          if (user.sarePendingOrder != null) ...[
+            _buildSarEPendingOrderBanner(context, user.sarePendingOrder!),
+            const SizedBox(height: 14),
+          ],
+
           // 1. Java Card status chip
           _buildStatusBanner(user),
           const SizedBox(height: 16),
@@ -833,6 +839,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
           // 8. Recent activity list + empty state
           _buildRecentActivity(context, user),
+          const SizedBox(height: 16),
+
+          // 9. Sar-E Store Promo card
+          _buildSarEPromoCard(context),
 
         ],
       ),
@@ -951,4 +961,207 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     if (amount >= 1000) return '${(amount / 1000).toStringAsFixed(1)}K';
     return amount.toStringAsFixed(2);
   }
+
+  Widget _buildSarEPendingOrderBanner(BuildContext context, SarEPendingOrder order) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF0369A1), Color(0xFF0891B2), Color(0xFF06B6D4)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.5), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0891B2).withValues(alpha: 0.35),
+            blurRadius: 20,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(LucideIcons.store, color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Sar-E Payment Request',
+                      style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                    ),
+                    Text(
+                      order.merchant,
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF59E0B),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Text(
+                  'Pending',
+                  style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    '${order.items.fold<int>(0, (s, i) => s + i.qty)} item(s) (${order.items.map((i) => "${i.qty}x ${i.name}").join(", ")})',
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 11),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '₱${order.totalAmount.toStringAsFixed(2)}',
+                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: GestureDetector(
+                  onTap: () => widget.onOpenOverlay?.call('nfc'),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(LucideIcons.wifi, color: Color(0xFF0369A1), size: 16),
+                        SizedBox(width: 6),
+                        Text(
+                          'Approve & Pay (Tapat)',
+                          style: TextStyle(color: Color(0xFF0369A1), fontSize: 12, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              GestureDetector(
+                onTap: () => ref.read(userProvider.notifier).clearSarEOrder(),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+                  ),
+                  child: const Text(
+                    'Decline',
+                    style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSarEPromoCard(BuildContext context) {
+    return GestureDetector(
+      onTap: () => widget.onNavigateTab?.call('sare'),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              const Color(0xFF0369A1).withValues(alpha: 0.25),
+              const Color(0xFF0891B2).withValues(alpha: 0.12),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFF0891B2).withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44, height: 44,
+              decoration: BoxDecoration(
+                color: const Color(0xFF0891B2).withValues(alpha: 0.25),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(LucideIcons.store, color: Color(0xFF38BDF8), size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Shop on Sar-E Store',
+                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Sari-sari store catalog with 1-tap card checkout',
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0891B2).withValues(alpha: 0.25),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFF0891B2).withValues(alpha: 0.4)),
+              ),
+              child: const Row(
+                children: [
+                  Text('Open', style: TextStyle(color: Color(0xFF38BDF8), fontSize: 11, fontWeight: FontWeight.bold)),
+                  SizedBox(width: 2),
+                  Icon(LucideIcons.chevronRight, size: 12, color: Color(0xFF38BDF8)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
 }

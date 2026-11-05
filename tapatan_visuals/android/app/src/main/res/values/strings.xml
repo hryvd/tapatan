@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SecureNFC Pay</string>
+    <string name="title_activity_main">SecureNFC Pay</string>
+    <string name="package_name">com.securenfc.pay</string>
+    <string name="custom_url_scheme">com.securenfc.pay</string>
+</resources>

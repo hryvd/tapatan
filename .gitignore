@@ -1,0 +1,54 @@
+# Python virtual environments
+venv*/
+**/venv*/
+.venv/
+env/
+
+# Python model files
+*.pth
+*.pkl
+*.pickle
+
+# Build and cache directories
+build/
+**/build/
+builds/
+dist/
+*.pyc
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.gradle/
+**/android/.gradle/
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS & JVM logs
+.DS_Store
+Thumbs.db
+hs_err_pid*.log
+replay_pid*.log
+scratch/
+
+# Flutter/Dart build artifacts
+.dart_tool/
+**/.dart_tool/
+.flutter-plugins
+.packages
+.pub-cache/
+
+# Firebase
+google-services.json
+
+# Node modules
+node_modules/
+**/node_modules/
+
+# Large files
+*.apk
+*.aab

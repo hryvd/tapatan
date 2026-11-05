@@ -1,0 +1,1046 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../application/inventory_provider.dart';
+import '../domain/entities/category.dart';
+import '../domain/entities/product.dart';
+import '../theme/app_theme.dart';
+import 'barcode_scanner_view.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+
+class InventoryScreen extends ConsumerWidget {
+  const InventoryScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AsyncValue<InventoryState> asyncState = ref.watch(inventoryProvider);
+
+    return asyncState.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (Object e, _) => Center(child: Text('Error: $e')),
+      data: (InventoryState state) => _InventoryContent(state: state),
+    );
+  }
+}
+
+class _InventoryContent extends ConsumerStatefulWidget {
+  const _InventoryContent({required this.state});
+
+  final InventoryState state;
+
+  @override
+  ConsumerState<_InventoryContent> createState() => _InventoryContentState();
+}
+
+class _InventoryContentState extends ConsumerState<_InventoryContent> {
+  void _showMessage(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  Future<void> _openQuickStockDialog(Product product) async {
+    final TextEditingController qtyCtrl = TextEditingController();
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext ctx) {
+        return AlertDialog(
+          title: Text('Add Stock — ${product.name}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Text('Current stock: ${product.stockQty}',
+                  style: TextStyle(color: appColors(ctx).textSecondary)),
+              const SizedBox(height: 12),
+              TextField(
+                controller: qtyCtrl,
+                autofocus: true,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Quantity to add',
+                  hintText: 'e.g. 50',
+                  prefixIcon: Icon(Icons.add),
+                ),
+              ),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () async {
+                final int? addQty = int.tryParse(qtyCtrl.text);
+                if (addQty == null) {
+                  _showMessage('Enter a valid number.');
+                  return;
+                }
+                if (addQty <= 0) {
+                  _showMessage('Quantity must be greater than zero.');
+                  return;
+                }
+                Navigator.pop(ctx);
+                await ref.read(inventoryProvider.notifier).updateStock(
+                      product.productId,
+                      product.stockQty + addQty,
+                    );
+                _showMessage('Added $addQty to ${product.name}');
+              },
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: appColors(ctx).primary,
+                  foregroundColor: Colors.white),
+              child: const Text('Add Stock'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _openAddProductDialog({bool forceNoBarcode = false}) async {
+    final TextEditingController nameCtrl = TextEditingController();
+    final TextEditingController priceCtrl = TextEditingController();
+    final TextEditingController costCtrl = TextEditingController();
+    final TextEditingController stockCtrl = TextEditingController();
+    final TextEditingController thresholdCtrl =
+        TextEditingController(text: '5');
+    final TextEditingController barcodeCtrl = TextEditingController();
+    String? selectedCategoryId;
+
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext ctx) {
+        return StatefulBuilder(
+          builder: (BuildContext ctx2, StateSetter setS) {
+            return AlertDialog(
+              title: Row(
+                children: [
+                  const Text('Add Product'),
+                  if (forceNoBarcode) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: appColors(ctx2).warning.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: appColors(ctx2).warning),
+                      ),
+                      child: Text('Auto Barcode',
+                          style: TextStyle(
+                              fontSize: 10,
+                              color: appColors(ctx2).warning,
+                              fontWeight: FontWeight.w600)),
+                    ),
+                  ],
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    TextField(
+                        controller: nameCtrl,
+                        decoration: const InputDecoration(
+                            labelText: 'Product Name *')),
+                    const SizedBox(height: 10),
+                    if (!forceNoBarcode)
+                      TextField(
+                        controller: barcodeCtrl,
+                        decoration: InputDecoration(
+                          labelText: 'Barcode (optional)',
+                          hintText: 'Leave blank to auto-generate',
+                          suffixIcon: IconButton(
+                            icon: const Icon(Icons.qr_code_scanner),
+                            onPressed: () async {
+                              final String? code =
+                                  await Navigator.of(context).push<String>(
+                                MaterialPageRoute(
+                                  builder: (_) => const BarcodeScannerView(),
+                                ),
+                              );
+                              if (code != null && code.isNotEmpty) {
+                                barcodeCtrl.text = code;
+                                setS(() {});
+                              }
+                            },
+                          ),
+                        ),
+                      ),
+                    if (forceNoBarcode)
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: appColors(ctx2).surfaceMuted,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.info_outline,
+                                size: 16,
+                                color: appColors(ctx2).textSecondary),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'A unique QR barcode will be auto-generated.\nYou can print it after saving.',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: appColors(ctx2).textSecondary),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    const SizedBox(height: 10),
+                    Row(children: <Widget>[
+                      Expanded(
+                        child: TextField(
+                          controller: priceCtrl,
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                          decoration:
+                              const InputDecoration(labelText: 'Sell Price *'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: costCtrl,
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                          decoration:
+                              const InputDecoration(labelText: 'Cost Price'),
+                        ),
+                      ),
+                    ]),
+                    const SizedBox(height: 10),
+                    Row(children: <Widget>[
+                      Expanded(
+                        child: TextField(
+                          controller: stockCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                              labelText: 'Stock Qty *'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: thresholdCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                              labelText: 'Low-stock Threshold'),
+                        ),
+                      ),
+                    ]),
+                    const SizedBox(height: 10),
+                    DropdownButtonFormField<String>(
+                      value: selectedCategoryId,
+                      hint: const Text('Category (optional)'),
+                      items: <DropdownMenuItem<String>>[
+                        ...widget.state.categories
+                            .map((Category cat) => DropdownMenuItem<String>(
+                                  value: cat.categoryId,
+                                  child: Text(cat.name),
+                                )),
+                        const DropdownMenuItem<String>(
+                          value: '__add_new__',
+                          child: Text('+ Add New Category',
+                              style:
+                                  TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                      onChanged: (String? v) async {
+                        if (v == '__add_new__') {
+                          final String? newCatId =
+                              await _openAddCategoryDialog();
+                          if (newCatId != null && mounted) {
+                            setS(() => selectedCategoryId = newCatId);
+                          } else {
+                            setS(() => selectedCategoryId = null);
+                          }
+                        } else {
+                          setS(() => selectedCategoryId = v);
+                        }
+                      },
+                      decoration:
+                          const InputDecoration(labelText: 'Category'),
+                    ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    final double price =
+                        double.tryParse(priceCtrl.text) ?? 0;
+                    final double cost =
+                        double.tryParse(costCtrl.text) ?? 0;
+                    final int stock =
+                        int.tryParse(stockCtrl.text) ?? 0;
+                    final int threshold =
+                        int.tryParse(thresholdCtrl.text) ?? 5;
+                    final String name = nameCtrl.text.trim();
+
+                    if (name.isEmpty) {
+                      _showMessage('Product name is required.');
+                      return;
+                    }
+                    if (price <= 0) {
+                      _showMessage('Sell price must be greater than zero.');
+                      return;
+                    }
+                    if (cost < 0) {
+                      _showMessage('Cost price cannot be negative.');
+                      return;
+                    }
+                    if (stock < 0) {
+                      _showMessage('Stock quantity cannot be negative.');
+                      return;
+                    }
+                    if (threshold < 0) {
+                      _showMessage('Threshold cannot be negative.');
+                      return;
+                    }
+
+                    // Build barcode: use typed one, or auto-generate
+                    final String barcode =
+                        barcodeCtrl.text.trim().isNotEmpty
+                            ? barcodeCtrl.text.trim()
+                            : 'SARE${DateTime.now().millisecondsSinceEpoch}';
+
+                    if (cost > price && cost > 0) {
+                      _showMessage(
+                        'Warning: Cost (₱${cost.toStringAsFixed(2)}) exceeds sell price (₱${price.toStringAsFixed(2)}).',
+                      );
+                    }
+
+                    // Close dialog FIRST, then do async work
+                    Navigator.pop(ctx);
+
+                    await ref.read(inventoryProvider.notifier).addProduct(
+                          name: name,
+                          barcode: barcode,
+                          unitPrice: price,
+                          costPrice: cost,
+                          stockQty: stock,
+                          threshold: threshold,
+                          categoryId: selectedCategoryId,
+                        );
+
+                    if (!mounted) return;
+                    _showMessage('Product "$name" added!');
+
+                    // Show print dialog for auto-barcode products
+                    if (forceNoBarcode) {
+                      _showPrintBarcodeDialog(name, barcode);
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: appColors(ctx).primary,
+                      foregroundColor: Colors.white),
+                  child: const Text('Add'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showPrintBarcodeDialog(String productName, String barcode) {
+    showDialog<void>(
+      context: context,
+      builder: (BuildContext ctx) {
+        final AppColors c = appColors(ctx);
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.print_rounded, color: c.primary, size: 22),
+              const SizedBox(width: 8),
+              const Text('Print Barcode'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                productName,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              // Show QR code of the barcode value
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: QrImageView(
+                  data: barcode,
+                  version: QrVersions.auto,
+                  size: 180,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: c.surfaceMuted,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  barcode,
+                  style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Scan this QR code with any scanner to identify this product.',
+                style: TextStyle(color: c.textSecondary, fontSize: 12),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+
+  Future<void> _openEditDialog(Product product) async {
+    final TextEditingController barcodeCtrl =
+        TextEditingController(text: product.barcode ?? '');
+    final TextEditingController priceCtrl =
+        TextEditingController(text: product.unitPrice.toString());
+    final TextEditingController costCtrl =
+        TextEditingController(text: product.costPrice.toString());
+    final TextEditingController stockCtrl =
+        TextEditingController(text: product.stockQty.toString());
+    final TextEditingController thresholdCtrl =
+        TextEditingController(text: product.threshold.toString());
+    String? selectedCategoryId = product.categoryId;
+    String? barcodeError;
+
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext ctx) {
+        return StatefulBuilder(
+          builder: (_, StateSetter setS) {
+            return AlertDialog(
+              title: Text('Edit – ${product.name}'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    // Barcode field with scan button
+                    TextField(
+                      controller: barcodeCtrl,
+                      decoration: InputDecoration(
+                        labelText: 'Barcode *',
+                        errorText: barcodeError,
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.qr_code_scanner),
+                          onPressed: () async {
+                            final String? code =
+                                await Navigator.of(context).push<String>(
+                              MaterialPageRoute(
+                                  builder: (_) => const BarcodeScannerView()),
+                            );
+                            if (code != null && code.isNotEmpty) {
+                              setS(() {
+                                barcodeCtrl.text = code;
+                                barcodeError = null;
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(children: <Widget>[
+                      Expanded(
+                        child: TextField(
+                            controller: priceCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            decoration:
+                                const InputDecoration(labelText: 'Sell Price')),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                            controller: costCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            decoration:
+                                const InputDecoration(labelText: 'Cost Price')),
+                      ),
+                    ]),
+                    const SizedBox(height: 10),
+                    Row(children: <Widget>[
+                      Expanded(
+                        child: TextField(
+                            controller: stockCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration:
+                                const InputDecoration(labelText: 'Stock Qty')),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                            controller: thresholdCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                                labelText: 'Low-stock Threshold')),
+                      ),
+                    ]),
+                    const SizedBox(height: 10),
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedCategoryId,
+                      hint: const Text('Category'),
+                      items: <DropdownMenuItem<String>>[
+                        ...widget.state.categories
+                            .map((Category cat) => DropdownMenuItem<String>(
+                                  value: cat.categoryId,
+                                  child: Text(cat.name),
+                                )),
+                        const DropdownMenuItem<String>(
+                          value: '__add_new__',
+                          child: Text('+ Add New Category',
+                              style: TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                      onChanged: (String? v) async {
+                        if (v == '__add_new__') {
+                          final String? newCatId = await _openAddCategoryDialog();
+                          if (newCatId != null && mounted) {
+                            setS(() => selectedCategoryId = newCatId);
+                          } else {
+                            setS(() => selectedCategoryId = null);
+                          }
+                        } else {
+                          setS(() => selectedCategoryId = v);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    if (barcodeCtrl.text.trim().isEmpty) {
+                      setS(() => barcodeError = 'Barcode is required');
+                      return;
+                    }
+                    final double price =
+                        double.tryParse(priceCtrl.text) ?? product.unitPrice;
+                    final double cost =
+                        double.tryParse(costCtrl.text) ?? product.costPrice;
+                    final int stock =
+                        int.tryParse(stockCtrl.text) ?? product.stockQty;
+                    final int threshold =
+                        int.tryParse(thresholdCtrl.text) ?? product.threshold;
+                    if (price <= 0) {
+                      _showMessage('Sell price must be greater than zero.');
+                      return;
+                    }
+                    if (cost < 0) {
+                      _showMessage('Cost price cannot be negative.');
+                      return;
+                    }
+                    if (stock < 0) {
+                      _showMessage('Stock quantity cannot be negative.');
+                      return;
+                    }
+                    if (threshold < 0) {
+                      _showMessage('Threshold cannot be negative.');
+                      return;
+                    }
+                    if (cost > price && cost > 0) {
+                      _showMessage(
+                        'Warning: Cost (₱${cost.toStringAsFixed(2)}) exceeds sell price (₱${price.toStringAsFixed(2)}).',
+                      );
+                    }
+                    Navigator.pop(ctx);
+                    await ref.read(inventoryProvider.notifier).updateProduct(
+                          product.copyWith(
+                            barcode: barcodeCtrl.text.trim(),
+                            unitPrice: price,
+                            costPrice: cost,
+                            stockQty: stock,
+                            threshold: threshold,
+                            categoryId: selectedCategoryId,
+                          ),
+                        );
+                    _showMessage('Product updated');
+                  },
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: appColors(ctx).primary,
+                      foregroundColor: Colors.white),
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<String?> _openAddCategoryDialog() async {
+    final TextEditingController nameCtrl = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (BuildContext ctx) {
+        return AlertDialog(
+          title: const Text('New Category'),
+          content: TextField(
+            controller: nameCtrl,
+            decoration: const InputDecoration(labelText: 'Category Name'),
+          ),
+          actions: <Widget>[
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () {
+                if (nameCtrl.text.trim().isEmpty) return;
+                Navigator.pop(ctx, nameCtrl.text.trim());
+              },
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: appColors(ctx).primary,
+                  foregroundColor: Colors.white),
+              child: const Text('Add'),
+            ),
+          ],
+        );
+      },
+    ).then((String? name) async {
+      if (name != null && name.isNotEmpty) {
+        final String newId = await ref
+            .read(inventoryProvider.notifier)
+            .addCategory(name);
+        _showMessage('Category added');
+        return newId;
+      }
+      return null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final AppColors c = appColors(context);
+    final InventoryState state = widget.state;
+    final List<Product> filtered = state.filtered;
+    final double topPadding = MediaQuery.paddingOf(context).top + kToolbarHeight - 28;
+
+    final double bottomPad = MediaQuery.paddingOf(context).bottom + 120;
+
+    return RefreshIndicator(
+      onRefresh: () async => ref.read(inventoryProvider.notifier).refresh(),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsets.fromLTRB(14, topPadding, 14, bottomPad),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            // Header row
+            Row(
+              children: <Widget>[
+                const Icon(Icons.inventory_2_outlined),
+                const SizedBox(width: 8),
+                Text('Inventory',
+                    style: Theme.of(context).textTheme.titleLarge),
+                const Spacer(),
+                IconButton(
+                  onPressed: () async {
+                    await ref
+                        .read(inventoryProvider.notifier)
+                        .recalculateAllSuggestions();
+                    _showMessage('Price suggestions updated');
+                  },
+                  icon: const Icon(Icons.auto_fix_high_outlined),
+                  tooltip: 'Recalculate Price Suggestions',
+                  iconSize: 20,
+                ),
+                IconButton(
+                  onPressed: _openAddCategoryDialog,
+                  icon: const Icon(Icons.label_outline),
+                  tooltip: 'Add Category',
+                  iconSize: 20,
+                ),
+                PopupMenuButton<String>(
+                  onSelected: (String val) {
+                    if (val == 'barcode') {
+                      _openAddProductDialog();
+                    } else {
+                      _openAddProductDialog(forceNoBarcode: true);
+                    }
+                  },
+                  itemBuilder: (_) => <PopupMenuEntry<String>>[
+                    const PopupMenuItem<String>(
+                      value: 'barcode',
+                      child: Row(
+                        children: [
+                          Icon(Icons.qr_code_scanner, size: 18),
+                          SizedBox(width: 10),
+                          Text('Scan / Enter Barcode'),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuItem<String>(
+                      value: 'nobarcode',
+                      child: Row(
+                        children: [
+                          Icon(Icons.qr_code_rounded, size: 18),
+                          SizedBox(width: 10),
+                          Text('No Barcode (Auto QR)'),
+                        ],
+                      ),
+                    ),
+                  ],
+                  child: ElevatedButton.icon(
+                    onPressed: null,
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('Add'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: c.primary,
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor: c.primary,
+                      disabledForegroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+
+            // Stats
+            Row(
+              children: <Widget>[
+                _StatCard(
+                    label: 'Products',
+                    value: '${state.products.length}',
+                    color: c.primary),
+                const SizedBox(width: 8),
+                _StatCard(
+                    label: 'Low Stock',
+                    value: '${state.lowStockCount}',
+                    color: c.warning),
+                const SizedBox(width: 8),
+                _StatCard(
+                  label: 'Value',
+                  value: state.totalValue >= 100000
+                      ? '₱${(state.totalValue / 1000).toStringAsFixed(1)}k'
+                      : '₱${state.totalValue.toStringAsFixed(0)}',
+                  color: c.info,
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+
+            // Low-stock banner
+            if (state.lowStockCount > 0)
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: c.warning.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: c.warning.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: <Widget>[
+                    Icon(Icons.warning_amber_rounded,
+                        color: c.warning, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${state.lowStockCount} product${state.lowStockCount == 1 ? '' : 's'} below restock threshold',
+                        style: TextStyle(color: c.warning, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            if (state.lowStockCount > 0) const SizedBox(height: 10),
+
+            // Search + category filter
+            TextField(
+              onChanged: (String v) =>
+                  ref.read(inventoryProvider.notifier).setSearch(v),
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                hintText: 'Search product...',
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 38,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: <Widget>[
+                  _CategoryChip(
+                    label: 'All',
+                    selected: state.selectedCategory == null,
+                    onTap: () =>
+                        ref.read(inventoryProvider.notifier).setCategory(null),
+                  ),
+                  const SizedBox(width: 6),
+                  ...state.categories.map((Category cat) => Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: _CategoryChip(
+                          label: cat.name,
+                          selected: state.selectedCategory == cat.categoryId,
+                          onTap: () => ref
+                              .read(inventoryProvider.notifier)
+                              .setCategory(cat.categoryId),
+                        ),
+                      )),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // Product list
+            if (filtered.isEmpty)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 30),
+                  child: Text('No products found',
+                      style: TextStyle(color: c.textSecondary)),
+                ),
+              )
+            else
+              ...filtered.map((Product p) {
+                final bool low = p.isLowStock;
+                final bool hasSuggestion =
+                    p.suggestedPrice != null && p.suggestedPrice! > p.unitPrice;
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: Row(
+                      children: <Widget>[
+                        // Status icon
+                        Container(
+                          width: 34,
+                          height: 34,
+                          decoration: BoxDecoration(
+                            color: low
+                                ? c.warning.withValues(alpha: 0.15)
+                                : c.primary.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            low ? Icons.warning_amber_rounded : Icons.inventory_2_outlined,
+                            color: low ? c.warning : c.primary,
+                            size: 16,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        // Name + subtitle
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              Text(
+                                p.name,
+                                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 2),
+                              Wrap(
+                                spacing: 4,
+                                runSpacing: 0,
+                                children: <Widget>[
+                                  Text(
+                                    p.categoryName ?? 'Uncategorized',
+                                    style: TextStyle(color: c.textSecondary, fontSize: 11),
+                                  ),
+                                  Text(
+                                    '·  Stock: ${p.stockQty}',
+                                    style: TextStyle(
+                                      color: low ? c.warning : c.textSecondary,
+                                      fontSize: 11,
+                                      fontWeight: low ? FontWeight.w600 : FontWeight.normal,
+                                    ),
+                                  ),
+                                  Text(
+                                    '₱${p.unitPrice.toStringAsFixed(2)}',
+                                    style: TextStyle(color: c.primary, fontSize: 11, fontWeight: FontWeight.w700),
+                                  ),
+                                ],
+                              ),
+                              if (hasSuggestion)
+                                Text(
+                                  'Suggested: ₱${p.suggestedPrice!.toStringAsFixed(2)}',
+                                  style: TextStyle(color: c.warning, fontSize: 10),
+                                ),
+                            ],
+                          ),
+                        ),
+                        // Action buttons
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            if (hasSuggestion)
+                              SizedBox(
+                                height: 26,
+                                child: TextButton(
+                                  onPressed: () async {
+                                    await ref
+                                        .read(inventoryProvider.notifier)
+                                        .acceptSuggestedPrice(p.productId, p.suggestedPrice!);
+                                    _showMessage('Price updated');
+                                  },
+                                  style: TextButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                  child: const Text('Accept', style: TextStyle(fontSize: 11)),
+                                ),
+                              ),
+                            IconButton(
+                              icon: Icon(Icons.add_box_outlined, size: 18, color: c.info),
+                              tooltip: 'Add Stock',
+                              onPressed: () => _openQuickStockDialog(p),
+                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                              padding: EdgeInsets.zero,
+                            ),
+                            IconButton(
+                              icon: Icon(Icons.edit_outlined, size: 18, color: c.textSecondary),
+                              tooltip: 'Edit',
+                              onPressed: () => _openEditDialog(p),
+                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                              padding: EdgeInsets.zero,
+                            ),
+                            IconButton(
+                              icon: Icon(Icons.delete_outline, size: 18, color: c.error),
+                              tooltip: 'Delete',
+                              onPressed: () async {
+                                final bool? ok = await showDialog<bool>(
+                                  context: context,
+                                  builder: (_) => AlertDialog(
+                                    title: const Text('Delete product?'),
+                                    content: Text('Remove "${p.name}" from inventory?'),
+                                    actions: <Widget>[
+                                      TextButton(
+                                          onPressed: () => Navigator.pop(context, false),
+                                          child: const Text('Cancel')),
+                                      ElevatedButton(
+                                          style: ElevatedButton.styleFrom(
+                                              backgroundColor: c.error,
+                                              foregroundColor: Colors.white),
+                                          onPressed: () => Navigator.pop(context, true),
+                                          child: const Text('Delete')),
+                                    ],
+                                  ),
+                                );
+                                if (ok == true) {
+                                  await ref.read(inventoryProvider.notifier).deleteProduct(p.productId);
+                                  _showMessage('Product removed');
+                                }
+                              },
+                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                              padding: EdgeInsets.zero,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatCard extends StatelessWidget {
+  const _StatCard({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppColors c = appColors(context);
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: c.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: c.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(value,
+                style: TextStyle(color: color, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 2),
+            Text(label, style: TextStyle(color: c.textSecondary, fontSize: 11)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CategoryChip extends StatelessWidget {
+  const _CategoryChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppColors c = appColors(context);
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) => onTap(),
+      selectedColor: c.primary.withValues(alpha: 0.15),
+      side: BorderSide(color: selected ? c.primary : c.border),
+    );
+  }
+}

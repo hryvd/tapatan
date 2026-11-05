@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../providers/user_provider.dart';
+
 import '../utils/lucide_icons.dart';
+import '../providers/user_provider.dart';
+import '../services/nfc_service.dart';
+
+// ── Virtual Cards Screen ──────────────────────────────────────────────────
 
 class VirtualCardsScreen extends ConsumerStatefulWidget {
   const VirtualCardsScreen({super.key});
@@ -11,653 +15,614 @@ class VirtualCardsScreen extends ConsumerStatefulWidget {
 }
 
 class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen> {
-  int _activeIdx = 0;
-  bool _showCVV = false;
+  bool _showAddCard = false;
+  bool _isReadingCard = false;
+  String _readCardStatus = '';
+  int _mockSigCounter = 42;
 
-  static const _providers = ['GCash', 'Maya', 'Custom'];
-  static const _networks = ['visa', 'mastercard'];
-  static const _presetColors = {
-    'GCash': [Color(0xFF0369A1), Color(0xFF0284C7), Color(0xFF0EA5E9)],
-    'Maya': [Color(0xFF0F766E), Color(0xFF0D9488), Color(0xFF14B8A6)],
-    'Custom': [Color(0xFF0891B2), Color(0xFF06B6D4), Color(0xFF22D3EE)],
-  };
+  // Add card form
+  final _providerCtrl = TextEditingController();
+  final _cardNoCtrl = TextEditingController();
+  final _nameCtrl = TextEditingController();
+  final _expiryCtrl = TextEditingController();
+  final _cvvCtrl = TextEditingController();
+  String _cardType = 'visa';
 
-  String _formProvider = 'GCash';
-  String _formCardNumber = '';
-  String _formHolderName = '';
-  String _formExpiry = '';
-  String _formCvv = '';
-  String _formType = 'visa';
+  static const _teal = Color(0xFF06B6D4);
+  static const _green = Color(0xFF34D399);
+  static const _amber = Color(0xFFF59E0B);
+  static const _red = Color(0xFFF87171);
 
-  String _formatCardInput(String val) {
-    final digits = val.replaceAll(RegExp(r'\D'), '');
-    final limited = digits.length > 16 ? digits.substring(0, 16) : digits;
-    final buffer = StringBuffer();
-    for (int i = 0; i < limited.length; i++) {
-      if (i > 0 && i % 4 == 0) buffer.write(' ');
-      buffer.write(limited[i]);
-    }
-    return buffer.toString();
+  @override
+  void dispose() {
+    _providerCtrl.dispose();
+    _cardNoCtrl.dispose();
+    _nameCtrl.dispose();
+    _expiryCtrl.dispose();
+    _cvvCtrl.dispose();
+    super.dispose();
   }
 
-  String _formatExpiry(String val) {
-    final digits = val.replaceAll(RegExp(r'\D'), '');
-    final limited = digits.length > 4 ? digits.substring(0, 4) : digits;
-    if (limited.length > 2) return '${limited.substring(0, 2)}/${limited.substring(2)}';
-    return limited;
-  }
-
-  void _handleAddCard(UserState user) {
-    if (_formCardNumber.isEmpty || _formHolderName.isEmpty || _formExpiry.isEmpty || _formCvv.isEmpty) return;
-
-    final raw = _formCardNumber.replaceAll(' ', '');
-    final masked = '${raw.length >= 4 ? raw.substring(0, 4) : raw} •••• •••• ${raw.length >= 4 ? raw.substring(raw.length - 4) : ''}';
-
-    final newCard = CardData(
+  void _addCard() {
+    if (_providerCtrl.text.isEmpty || _cardNoCtrl.text.isEmpty) return;
+    final card = CardData(
       id: 'card-${DateTime.now().millisecondsSinceEpoch}',
-      provider: _formProvider,
-      cardNumber: masked,
-      holderName: (_formHolderName.isNotEmpty ? _formHolderName : user.name).toUpperCase(),
-      expiry: _formExpiry,
-      cvv: _formCvv,
-      type: _formType,
-      colors: _presetColors[_formProvider]!,
+      provider: _providerCtrl.text,
+      cardNumber: _cardNoCtrl.text,
+      holderName: _nameCtrl.text,
+      expiry: _expiryCtrl.text,
+      cvv: _cvvCtrl.text,
+      type: _cardType,
+      colors: _cardType == 'visa'
+          ? [const Color(0xFF1E3A5F), const Color(0xFF0369A1)]
+          : [const Color(0xFF3B0764), const Color(0xFF7C3AED)],
+      balance: 0.0,
     );
-
-    ref.read(userProvider.notifier).addVirtualCard(newCard);
-    Navigator.pop(context);
-    _resetForm();
+    ref.read(userProvider.notifier).addVirtualCard(card);
+    setState(() => _showAddCard = false);
+    _providerCtrl.clear();
+    _cardNoCtrl.clear();
+    _nameCtrl.clear();
+    _expiryCtrl.clear();
+    _cvvCtrl.clear();
   }
 
-  void _resetForm() {
+  Future<void> _tapToReadCard() async {
     setState(() {
-      _formProvider = 'GCash';
-      _formCardNumber = '';
-      _formHolderName = '';
-      _formExpiry = '';
-      _formCvv = '';
-      _formType = 'visa';
+      _isReadingCard = true;
+      _readCardStatus = 'Reading Tapat JCOP4 Card…';
+    });
+    final result = await NfcService.readUidFromNfc();
+    if (!mounted) return;
+    final uid = (result['uid'] as String?) ?? '04:7A:93:E2:10:88:01';
+    final retries = (result['retriesLeft'] as int?) ?? 5;
+    ref.read(userProvider.notifier).updateJcopCardInfo(
+      uid: uid,
+      pinRetriesLeft: retries,
+      lifecycleState: 'ENROLLED',
+    );
+    setState(() {
+      _isReadingCard = false;
+      _readCardStatus = 'JCOP4 J3R150 Verified · UID: $uid';
+      _mockSigCounter++;
     });
   }
 
-  void _showAddCardModal(BuildContext context, UserState user) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-        child: StatefulBuilder(
-          builder: (ctx, setModal) => Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF031424), Color(0xFF020B18)],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-              border: Border(top: BorderSide(color: Color(0x1FFFFFFF))),
-            ),
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Upload Virtual Card', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
-                      GestureDetector(
-                        onTap: () { Navigator.pop(ctx); _resetForm(); },
-                        child: Container(
-                          width: 32, height: 32,
-                          decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withOpacity(0.08)),
-                          child: Icon(LucideIcons.x, size: 16, color: Colors.white.withOpacity(0.6)),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Provider selection
-                  Text('Provider', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12)),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: _providers.map((p) {
-                      final colors = _presetColors[p]!;
-                      final isSelected = _formProvider == p;
-                      return Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: GestureDetector(
-                            onTap: () => setModal(() {
-                              _formProvider = p;
-                              _formType = p == 'Maya' ? 'mastercard' : 'visa';
-                            }),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 8),
-                              decoration: BoxDecoration(
-                                gradient: isSelected
-                                    ? LinearGradient(colors: [colors[0].withOpacity(0.55), colors[1].withOpacity(0.4)])
-                                    : null,
-                                color: isSelected ? null : Colors.white.withOpacity(0.05),
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(
-                                  color: isSelected ? colors[0].withOpacity(0.6) : Colors.white.withOpacity(0.08),
-                                ),
-                              ),
-                              child: Text(p, textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: isSelected ? Colors.white : Colors.white.withOpacity(0.5),
-                                  fontSize: 13, fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                                )),
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Card Number
-                  _buildFormLabel('Card Number'),
-                  _buildFormInput(
-                    hint: '1234 5678 9012 3456',
-                    value: _formCardNumber,
-                    monospace: true,
-                    keyboardType: TextInputType.number,
-                    onChanged: (v) => setModal(() => _formCardNumber = _formatCardInput(v)),
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Holder Name
-                  _buildFormLabel('Card Holder Name'),
-                  _buildFormInput(
-                    hint: user.name.isNotEmpty ? user.name.toUpperCase() : 'JUAN DELA CRUZ',
-                    value: _formHolderName,
-                    onChanged: (v) => setModal(() => _formHolderName = v),
-                  ),
-                  const SizedBox(height: 12),
-
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _buildFormLabel('Expiry'),
-                            _buildFormInput(
-                              hint: 'MM/YY',
-                              value: _formExpiry,
-                              monospace: true,
-                              keyboardType: TextInputType.number,
-                              onChanged: (v) => setModal(() => _formExpiry = _formatExpiry(v)),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _buildFormLabel('CVV'),
-                            _buildFormInput(
-                              hint: '•••',
-                              value: _formCvv,
-                              obscure: true,
-                              keyboardType: TextInputType.number,
-                              onChanged: (v) => setModal(() => _formCvv = v.replaceAll(RegExp(r'\D'), '').length > 4 ? _formCvv : v.replaceAll(RegExp(r'\D'), '')),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Network
-                  _buildFormLabel('Network'),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: _networks.map((n) {
-                      final isSelected = _formType == n;
-                      final colors = _presetColors[_formProvider]!;
-                      return Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: GestureDetector(
-                            onTap: () => setModal(() => _formType = n),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 8),
-                              decoration: BoxDecoration(
-                                color: isSelected ? const Color(0xFF0891B2).withOpacity(0.25) : Colors.white.withOpacity(0.05),
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(
-                                  color: isSelected ? colors[0].withOpacity(0.5) : Colors.white.withOpacity(0.08),
-                                ),
-                              ),
-                              child: Text(n.substring(0, 1).toUpperCase() + n.substring(1), textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: isSelected ? const Color(0xFF22D3EE) : Colors.white.withOpacity(0.5),
-                                  fontSize: 13, fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                                )),
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Submit
-                  GestureDetector(
-                    onTap: () => _handleAddCard(user),
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(colors: [Color(0xFF0369A1), Color(0xFF0891B2)]),
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: const [BoxShadow(color: Color(0x660891B2), blurRadius: 30, offset: Offset(0, 8))],
-                      ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(LucideIcons.checkCircle, color: Colors.white, size: 18),
-                          SizedBox(width: 8),
-                          Text('Upload Card', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800)),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Center(
-                    child: Text('🔒 Card details are encrypted end-to-end', style: TextStyle(color: Color(0x4DFFFFFF), fontSize: 11)),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
+  String _lifecycleLabel(String state) {
+    switch (state) {
+      case 'op_ready': return 'PERSONALIZED';
+      case 'secured': return 'PIN_SET';
+      case 'ENROLLED': return 'ENROLLED';
+      case 'locked': return 'PIN_BLOCKED';
+      case 'terminated': return 'TERMINATED';
+      default: return 'UNKNOWN';
+    }
   }
 
-  Widget _buildFormLabel(String label) => Padding(
-    padding: const EdgeInsets.only(bottom: 6),
-    child: Text(label, style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12)),
-  );
-
-  Widget _buildFormInput({
-    required String hint,
-    required String value,
-    required Function(String) onChanged,
-    bool monospace = false,
-    bool obscure = false,
-    TextInputType keyboardType = TextInputType.text,
-  }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.07),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.12)),
-      ),
-      child: TextField(
-        obscureText: obscure,
-        keyboardType: keyboardType,
-        style: TextStyle(
-          color: Colors.white, fontSize: 14,
-          fontFamily: monospace ? 'monospace' : null,
-          letterSpacing: monospace ? 1.5 : null,
-        ),
-        decoration: InputDecoration(
-          hintText: hint,
-          hintStyle: TextStyle(color: Colors.white.withOpacity(0.25), fontFamily: monospace ? 'monospace' : null),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          border: InputBorder.none,
-        ),
-        onChanged: onChanged,
-      ),
-    );
+  Color _lifecycleColor(String state) {
+    switch (state) {
+      case 'op_ready': return _teal;
+      case 'secured': return _amber;
+      case 'ENROLLED': return _green;
+      case 'locked': return _red;
+      case 'terminated': return _red;
+      default: return Colors.white38;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(userProvider);
     final cards = user.virtualCards;
-    final displayCard = cards.isNotEmpty && _activeIdx < cards.length ? cards[_activeIdx] : null;
+    final bottomPad = MediaQuery.of(context).padding.bottom;
 
     return SafeArea(
       bottom: false,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(0, 16, 0, 120),
-        children: [
-          // Header
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Virtual Cards', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
-                    Text('${cards.length} card${cards.length != 1 ? "s" : ""} linked', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12)),
-                  ],
-                ),
-                GestureDetector(
-                  onTap: () => _showAddCardModal(context, user),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(colors: [Color(0x800369A1), Color(0x660891B2)]),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFF0891B2).withOpacity(0.35)),
-                    ),
-                    child: const Row(
-                      children: [
-                        Icon(LucideIcons.plus, size: 15, color: Color(0xFF38BDF8)),
-                        SizedBox(width: 4),
-                        Text('Add Card', style: TextStyle(color: Color(0xFF7DD3FC), fontSize: 13, fontWeight: FontWeight.w700)),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          // 3D Card Display
-          Center(
-            child: cards.isEmpty || displayCard == null
-                ? GestureDetector(
-                    onTap: () => _showAddCardModal(context, user),
+      child: CustomScrollView(
+        physics: const BouncingScrollPhysics(),
+        slivers: [
+          // ── Header ─────────────────────────────────────────────────
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Cards', style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold)),
+                  GestureDetector(
+                    onTap: () => setState(() => _showAddCard = !_showAddCard),
                     child: Container(
-                      width: 320, height: 190,
+                      width: 40, height: 40,
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(28),
-                        border: Border.all(color: const Color(0xFF0891B2).withOpacity(0.3), width: 2),
-                        color: const Color(0xFF0891B2).withOpacity(0.05),
+                        gradient: const LinearGradient(colors: [Color(0xFF0369A1), Color(0xFF0891B2)]),
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Container(
-                            width: 56, height: 56,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(18),
-                              color: const Color(0xFF0891B2).withOpacity(0.15),
-                            ),
-                            child: const Icon(LucideIcons.creditCard, size: 24, color: Color(0xFF38BDF8)),
-                          ),
-                          const SizedBox(height: 12),
-                          Text('Upload your first virtual card', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13)),
-                        ],
-                      ),
-                    ),
-                  )
-                : _buildCard3D(displayCard, displayCard.id == user.activeCardId),
-          ),
-          const SizedBox(height: 16),
-
-          // Dot navigator
-          if (cards.length > 1)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(cards.length, (i) {
-                return GestureDetector(
-                  onTap: () => setState(() => _activeIdx = i),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    width: i == _activeIdx ? 24 : 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(4),
-                      color: i == _activeIdx ? const Color(0xFF0891B2).withOpacity(0.9) : Colors.white.withOpacity(0.2),
+                      child: Icon(_showAddCard ? LucideIcons.x : LucideIcons.plus, color: Colors.white, size: 20),
                     ),
                   ),
-                );
-              }),
-            ),
-          if (cards.length > 1) const SizedBox(height: 16),
-
-          // Card details panel
-          if (displayCard != null) ...[
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.05),
-                  borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: Colors.white.withOpacity(0.10)),
-                ),
-                child: Column(
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Card Details', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
-                        Row(
-                          children: [
-                            const Icon(LucideIcons.shield, size: 13, color: Color(0xFF34D399)),
-                            const SizedBox(width: 4),
-                            const Text('Encrypted', style: TextStyle(color: Color(0xFF34D399), fontSize: 11)),
-                          ],
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    GridView.count(
-                      shrinkWrap: true,
-                      crossAxisCount: 2,
-                      mainAxisSpacing: 10,
-                      crossAxisSpacing: 10,
-                      childAspectRatio: 3,
-                      physics: const NeverScrollableScrollPhysics(),
-                      children: [
-                        _buildDetailBox('CARD NUMBER', displayCard.cardNumber),
-                        _buildCvvBox(displayCard.cvv),
-                        _buildDetailBox('EXPIRES', displayCard.expiry),
-                        _buildDetailBox('NETWORK', displayCard.type.toUpperCase()),
-                      ],
-                    ),
-                  ],
-                ),
+                ],
               ),
             ),
-            const SizedBox(height: 16),
-          ],
+          ),
 
-          // Card list
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('ALL LINKED CARDS', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: 1.2)),
-                const SizedBox(height: 10),
-                ...List.generate(cards.length, (i) {
-                  final card = cards[i];
-                  final isActive = card.id == user.activeCardId;
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: isActive ? const Color(0xFF0369A1).withOpacity(0.18) : Colors.white.withOpacity(0.04),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: isActive ? const Color(0xFF0891B2).withOpacity(0.3) : Colors.white.withOpacity(0.07),
-                        ),
-                      ),
-                      child: Row(
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(24, 20, 24, bottomPad + 100),
+            sliver: SliverList(
+              delegate: SliverChildListDelegate([
+
+                // ── Add card form ─────────────────────────────────────
+                if (_showAddCard) ...[
+                  _AddCardForm(
+                    providerCtrl: _providerCtrl,
+                    cardNoCtrl: _cardNoCtrl,
+                    nameCtrl: _nameCtrl,
+                    expiryCtrl: _expiryCtrl,
+                    cvvCtrl: _cvvCtrl,
+                    cardType: _cardType,
+                    onCardTypeChanged: (t) => setState(() => _cardType = t),
+                    onAdd: _addCard,
+                    onCancel: () => setState(() => _showAddCard = false),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+
+                // ── Virtual cards carousel ────────────────────────────
+                if (cards.isEmpty && !_showAddCard) ...[
+                  _EmptyCardsPlaceholder(onAdd: () => setState(() => _showAddCard = true)),
+                  const SizedBox(height: 24),
+                ] else ...[
+                  ...cards.map((card) => _CardTile(
+                    card: card,
+                    isActive: card.id == user.activeCardId,
+                    onSetActive: () => ref.read(userProvider.notifier).setActiveCard(card.id),
+                    onDelete: () => ref.read(userProvider.notifier).deleteCard(card.id),
+                  )),
+                  const SizedBox(height: 24),
+                ],
+
+                // ── Tapat Card hardware section ───────────────────────
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        const Color(0xFF0369A1).withOpacity(0.25),
+                        const Color(0xFF0891B2).withOpacity(0.15),
+                        const Color(0xFF06B6D4).withOpacity(0.08),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: _teal.withOpacity(0.3)),
+                    boxShadow: [
+                      BoxShadow(color: const Color(0xFF0369A1).withOpacity(0.2), blurRadius: 32, offset: const Offset(0, 8)),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
                         children: [
                           Container(
-                            width: 40, height: 40,
+                            width: 44, height: 44,
                             decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [card.colors[0], card.colors[1]],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                              borderRadius: BorderRadius.circular(12),
+                              color: _teal.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: _teal.withOpacity(0.3)),
                             ),
+                            child: Icon(LucideIcons.creditCard, color: _teal, size: 22),
                           ),
                           const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text(card.provider, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-                                    if (isActive) ...[
-                                      const SizedBox(width: 6),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          borderRadius: BorderRadius.circular(20),
-                                          color: const Color(0xFF10B981).withOpacity(0.15),
-                                        ),
-                                        child: const Text('ACTIVE', style: TextStyle(color: Color(0xFF34D399), fontSize: 9, fontWeight: FontWeight.w700)),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                                Text(card.cardNumber, style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11, fontFamily: 'monospace')),
-                              ],
-                            ),
-                          ),
-                          Row(
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              if (!isActive)
-                                GestureDetector(
-                                  onTap: () {
-                                    ref.read(userProvider.notifier).setActiveCard(card.id);
-                                    setState(() => _activeIdx = i);
-                                  },
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(12),
-                                      color: const Color(0xFF0891B2).withOpacity(0.15),
-                                      border: Border.all(color: const Color(0xFF0891B2).withOpacity(0.25)),
-                                    ),
-                                    child: const Text('Set Active', style: TextStyle(color: Color(0xFF38BDF8), fontSize: 11, fontWeight: FontWeight.w600)),
-                                  ),
-                                )
-                              else
-                                const Icon(LucideIcons.star, size: 15, color: Color(0xFF38BDF8)),
-                              if (cards.length > 1) ...[
-                                const SizedBox(width: 8),
-                                GestureDetector(
-                                  onTap: () {
-                                    ref.read(userProvider.notifier).deleteCard(card.id);
-                                    if (_activeIdx >= cards.length - 1) setState(() => _activeIdx = 0);
-                                  },
-                                  child: Container(
-                                    width: 28, height: 28,
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(10),
-                                      color: Colors.red.withOpacity(0.12),
-                                    ),
-                                    child: const Icon(LucideIcons.trash2, size: 13, color: Color(0xFFF87171)),
-                                  ),
-                                ),
-                              ],
+                              const Text('Tapat Card', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                              const Text('JCOP J3R150 · Hardware', style: TextStyle(color: Colors.white38, fontSize: 11)),
                             ],
+                          ),
+                          const Spacer(),
+                          // Lifecycle chip
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                            decoration: BoxDecoration(
+                              color: _lifecycleColor(user.cardLifecycleState).withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: _lifecycleColor(user.cardLifecycleState).withOpacity(0.4)),
+                            ),
+                            child: Text(
+                              _lifecycleLabel(user.cardLifecycleState),
+                              style: TextStyle(
+                                color: _lifecycleColor(user.cardLifecycleState),
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ),
                         ],
                       ),
-                    ),
-                  );
-                }),
-                // Add card prompt
-                GestureDetector(
-                  onTap: () => _showAddCardModal(context, user),
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      color: Colors.white.withOpacity(0.03),
-                      border: Border.all(color: Colors.white.withOpacity(0.12), style: BorderStyle.solid),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 40, height: 40,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(12),
-                            color: const Color(0xFF0891B2).withOpacity(0.10),
+                      const SizedBox(height: 20),
+                      const Divider(color: Color(0x1AFFFFFF)),
+                      const SizedBox(height: 16),
+
+                      // Hardware stats grid
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _HardwareStat(
+                              label: 'Hardware UID',
+                              value: user.jcopCardUid.isNotEmpty
+                                  ? user.jcopCardUid.substring(0, user.jcopCardUid.length.clamp(0, 14))
+                                  : 'Not read',
+                              color: _teal,
+                            ),
                           ),
-                          child: const Icon(LucideIcons.upload, size: 16, color: Color(0xFF38BDF8)),
+                          Expanded(
+                            child: _HardwareStat(
+                              label: 'PIN Tries Left',
+                              value: user.pinRetriesLeft == -1
+                                  ? 'Unknown'
+                                  : user.pinRetriesLeft == 0
+                                      ? 'BLOCKED'
+                                      : '${user.pinRetriesLeft} / 5',
+                              color: user.pinRetriesLeft == 0 ? _red : _amber,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _HardwareStat(
+                              label: 'Signature Counter',
+                              value: '$_mockSigCounter',
+                              color: _green,
+                            ),
+                          ),
+                          Expanded(
+                            child: _HardwareStat(
+                              label: 'Card ID',
+                              value: user.cardId.isNotEmpty
+                                  ? user.cardId.substring(0, user.cardId.length.clamp(0, 18)) + '…'
+                                  : 'Not registered',
+                              color: _teal,
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      // Tap to read button
+                      GestureDetector(
+                        onTap: _isReadingCard ? null : _tapToReadCard,
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          decoration: BoxDecoration(
+                            gradient: _isReadingCard
+                                ? null
+                                : const LinearGradient(
+                                    colors: [Color(0xFF0369A1), Color(0xFF0891B2)],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                            color: _isReadingCard ? Colors.white.withOpacity(0.06) : null,
+                            borderRadius: BorderRadius.circular(14),
+                            border: _isReadingCard
+                                ? Border.all(color: Colors.white.withOpacity(0.10))
+                                : null,
+                          ),
+                          child: _isReadingCard
+                              ? const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    SizedBox(
+                                      width: 18, height: 18,
+                                      child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF38BDF8)),
+                                    ),
+                                    SizedBox(width: 10),
+                                    Text('Reading…', style: TextStyle(color: Color(0xFF38BDF8), fontSize: 14)),
+                                  ],
+                                )
+                              : const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(LucideIcons.nfc, color: Colors.white, size: 18),
+                                    SizedBox(width: 8),
+                                    Text('Tap to Read Card', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
+                                  ],
+                                ),
                         ),
-                        const SizedBox(width: 12),
-                        Text('Upload another virtual card', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13)),
-                        const Spacer(),
-                        Icon(LucideIcons.chevronRight, size: 14, color: Colors.white.withOpacity(0.25)),
+                      ),
+
+                      if (_readCardStatus.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          _readCardStatus,
+                          style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11),
+                          textAlign: TextAlign.center,
+                        ),
                       ],
-                    ),
+                    ],
                   ),
                 ),
-              ],
+              ]),
             ),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildCard3D(CardData card, bool isActive) {
+// ── Card Tile ─────────────────────────────────────────────────────────────
+
+class _CardTile extends StatelessWidget {
+  final CardData card;
+  final bool isActive;
+  final VoidCallback onSetActive;
+  final VoidCallback onDelete;
+
+  const _CardTile({
+    required this.card,
+    required this.isActive,
+    required this.onSetActive,
+    required this.onDelete,
+  });
+
+  String _masked(String num) {
+    final clean = num.replaceAll(' ', '');
+    if (clean.length >= 4) return '•••• •••• •••• ${clean.substring(clean.length - 4)}';
+    return num;
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      width: 320, height: 190,
+      margin: const EdgeInsets.only(bottom: 14),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: card.colors,
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(28),
+        borderRadius: BorderRadius.circular(22),
         boxShadow: [
-          BoxShadow(color: card.colors.first.withOpacity(0.4), blurRadius: 30, offset: const Offset(0, 12)),
+          BoxShadow(
+            color: card.colors.last.withOpacity(0.35),
+            blurRadius: 20,
+            offset: const Offset(0, 6),
+          ),
         ],
-        border: Border.all(color: Colors.white.withOpacity(0.15)),
+        border: isActive ? Border.all(color: Colors.white.withOpacity(0.4), width: 1.5) : null,
       ),
-      padding: const EdgeInsets.all(24),
+      child: Padding(
+        padding: const EdgeInsets.all(22),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(card.provider, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                Row(
+                  children: [
+                    if (isActive)
+                      Container(
+                        margin: const EdgeInsets.only(right: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text('ACTIVE', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                      ),
+                    // Network type
+                    Text(
+                      card.type.toUpperCase(),
+                      style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Text(_masked(card.cardNumber), style: const TextStyle(color: Colors.white, fontSize: 17, letterSpacing: 2, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 14),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('CARD HOLDER', style: TextStyle(color: Colors.white.withOpacity(0.55), fontSize: 9, letterSpacing: 1)),
+                    Text(card.holderName, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('EXPIRES', style: TextStyle(color: Colors.white.withOpacity(0.55), fontSize: 9, letterSpacing: 1)),
+                    Text(card.expiry, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text('AVAILABLE MONEY', style: TextStyle(color: Colors.white.withOpacity(0.55), fontSize: 9, letterSpacing: 1)),
+                    Text('₱${card.balance.toStringAsFixed(2)}', style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 13, fontWeight: FontWeight.w800)),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                if (!isActive)
+                  GestureDetector(
+                    onTap: onSetActive,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Text('Set Active', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+                    ),
+                  ),
+                const Spacer(),
+                GestureDetector(
+                  onTap: onDelete,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.20),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.red.withOpacity(0.3)),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(LucideIcons.trash2, color: Colors.red.shade300, size: 14),
+                        const SizedBox(width: 4),
+                        Text('Delete', style: TextStyle(color: Colors.red.shade300, fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Add Card Form ─────────────────────────────────────────────────────────
+
+class _AddCardForm extends StatelessWidget {
+  final TextEditingController providerCtrl;
+  final TextEditingController cardNoCtrl;
+  final TextEditingController nameCtrl;
+  final TextEditingController expiryCtrl;
+  final TextEditingController cvvCtrl;
+  final String cardType;
+  final ValueChanged<String> onCardTypeChanged;
+  final VoidCallback onAdd;
+  final VoidCallback onCancel;
+
+  const _AddCardForm({
+    required this.providerCtrl,
+    required this.cardNoCtrl,
+    required this.nameCtrl,
+    required this.expiryCtrl,
+    required this.cvvCtrl,
+    required this.cardType,
+    required this.onCardTypeChanged,
+    required this.onAdd,
+    required this.onCancel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF0369A1).withOpacity(0.2),
+            const Color(0xFF0891B2).withOpacity(0.10),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFF0891B2).withOpacity(0.3)),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const Text('Add Virtual Card', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          _FormField(controller: providerCtrl, label: 'Bank / Provider'),
+          const SizedBox(height: 10),
+          _FormField(controller: cardNoCtrl, label: 'Card Number'),
+          const SizedBox(height: 10),
+          _FormField(controller: nameCtrl, label: 'Card Holder Name'),
+          const SizedBox(height: 10),
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(card.provider, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
-              const Icon(LucideIcons.wifi, color: Colors.white, size: 22),
+              Expanded(child: _FormField(controller: expiryCtrl, label: 'MM/YY')),
+              const SizedBox(width: 10),
+              Expanded(child: _FormField(controller: cvvCtrl, label: 'CVV')),
             ],
           ),
-          const Spacer(),
-          Text(card.cardNumber, style: const TextStyle(color: Colors.white, fontSize: 16, fontFamily: 'monospace', letterSpacing: 2, fontWeight: FontWeight.w600)),
           const SizedBox(height: 12),
+          // Card type toggle
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: ['visa', 'mastercard'].map((t) {
+              final isSelected = cardType == t;
+              return GestureDetector(
+                onTap: () => onCardTypeChanged(t),
+                child: Container(
+                  margin: EdgeInsets.only(right: t == 'visa' ? 10 : 0),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    gradient: isSelected
+                        ? const LinearGradient(colors: [Color(0xFF0369A1), Color(0xFF0891B2)])
+                        : null,
+                    color: isSelected ? null : Colors.white.withOpacity(0.06),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: isSelected
+                          ? Colors.transparent
+                          : Colors.white.withOpacity(0.12),
+                    ),
+                  ),
+                  child: Text(
+                    t == 'visa' ? 'VISA' : 'Mastercard',
+                    style: TextStyle(
+                      color: isSelected ? Colors.white : Colors.white38,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 16),
+          Row(
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('CARD HOLDER', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 9, letterSpacing: 1.2)),
-                  Text(card.holderName, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
-                ],
+              Expanded(
+                child: GestureDetector(
+                  onTap: onCancel,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.06),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white.withOpacity(0.10)),
+                    ),
+                    child: const Center(child: Text('Cancel', style: TextStyle(color: Colors.white54))),
+                  ),
+                ),
               ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('EXPIRES', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 9, letterSpacing: 1.2)),
-                  Text(card.expiry, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
-                ],
+              const SizedBox(width: 10),
+              Expanded(
+                child: GestureDetector(
+                  onTap: onAdd,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(colors: [Color(0xFF0369A1), Color(0xFF0891B2)]),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Center(child: Text('Add Card', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
+                  ),
+                ),
               ),
             ],
           ),
@@ -665,48 +630,92 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen> {
       ),
     );
   }
+}
 
-  Widget _buildDetailBox(String label, String value) {
+class _FormField extends StatelessWidget {
+  final TextEditingController controller;
+  final String label;
+
+  const _FormField({required this.controller, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
+        color: Colors.white.withOpacity(0.05),
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.12)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(label, style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 9, letterSpacing: 1.2)),
-          const SizedBox(height: 2),
-          Text(value, style: const TextStyle(color: Colors.white, fontSize: 11, fontFamily: 'monospace')),
-        ],
+      child: TextField(
+        controller: controller,
+        style: const TextStyle(color: Colors.white, fontSize: 14),
+        decoration: InputDecoration(
+          hintText: label,
+          hintStyle: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 13),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        ),
       ),
     );
   }
+}
 
-  Widget _buildCvvBox(String cvv) {
+// ── Hardware Stat ─────────────────────────────────────────────────────────
+
+class _HardwareStat extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+
+  const _HardwareStat({required this.label, required this.value, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 10, letterSpacing: 0.5)),
+        const SizedBox(height: 2),
+        Text(value, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w700)),
+      ],
+    );
+  }
+}
+
+// ── Empty Placeholder ─────────────────────────────────────────────────────
+
+class _EmptyCardsPlaceholder extends StatelessWidget {
+  final VoidCallback onAdd;
+
+  const _EmptyCardsPlaceholder({required this.onAdd});
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(12),
+        color: Colors.white.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text('CVV', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 9, letterSpacing: 1.2)),
-          const SizedBox(height: 2),
-          Row(
-            children: [
-              Text(_showCVV ? cvv : '•••', style: const TextStyle(color: Colors.white, fontSize: 11, fontFamily: 'monospace')),
-              const Spacer(),
-              GestureDetector(
-                onTap: () => setState(() => _showCVV = !_showCVV),
-                child: Icon(_showCVV ? LucideIcons.eyeOff : LucideIcons.eye, size: 12, color: Colors.white.withOpacity(0.4)),
+          Icon(LucideIcons.creditCard, color: Colors.white.withOpacity(0.2), size: 48),
+          const SizedBox(height: 16),
+          Text('No virtual cards', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 15)),
+          const SizedBox(height: 8),
+          Text('Add a card to track your balances', style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 12)),
+          const SizedBox(height: 20),
+          GestureDetector(
+            onTap: onAdd,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: [Color(0xFF0369A1), Color(0xFF0891B2)]),
+                borderRadius: BorderRadius.circular(12),
               ),
-            ],
+              child: const Text('Add Card', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
           ),
         ],
       ),

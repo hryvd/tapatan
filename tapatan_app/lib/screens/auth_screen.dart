@@ -7,6 +7,8 @@ import '../utils/lucide_icons.dart';
 import '../services/nfc_service.dart';
 import '../providers/user_provider.dart';
 
+enum AuthView { welcome, login, signup, registerCard }
+
 class AuthScreen extends ConsumerStatefulWidget {
   const AuthScreen({super.key});
 
@@ -14,204 +16,322 @@ class AuthScreen extends ConsumerStatefulWidget {
   ConsumerState<AuthScreen> createState() => _AuthScreenState();
 }
 
-enum AuthView { welcome, login, signup, idVerification, registerCard }
-
-// Accepted Philippine government IDs
-const _govIds = [
-  'PhilSys National ID',
-  'Philippine Passport',
-  'Driver\'s License (LTO)',
-  'SSS (Social Security) ID',
-  'GSIS (eCard)',
-  'PRC Professional ID',
-  'Voter\'s ID (COMELEC)',
-  'Postal ID (PHLPost)',
-];
-
-class _AuthScreenState extends ConsumerState<AuthScreen>
-    with TickerProviderStateMixin {
+class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStateMixin {
   AuthView _view = AuthView.welcome;
-  bool _isReturningUser = false;
   bool _isLoading = false;
   bool _nfcTapping = false;
   bool _showPass = false;
+  String _cardStep = 'idle'; // idle, scanning, success
 
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _pinController = TextEditingController();
   final TextEditingController _confirmPinController = TextEditingController();
 
-  // KYC state
-  int _kycStep = 0; // 0=id select, 1=front scan, 2=back scan, 3=face
-  String? _selectedId;
-  bool _frontCaptured = false;
-  bool _backCaptured = false;
-  bool _faceCaptured = false;
-  bool _scanning = false;
-  double _faceProgress = 0.0;
-
   late AnimationController _pulseController;
-  late AnimationController _glowController;
   late Animation<double> _pulseAnim;
-  late Animation<double> _glowAnim;
-
-  String _cardStep = 'idle'; // idle, scanning, success
 
   @override
   void initState() {
     super.initState();
     _pulseController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 1400),
     )..repeat(reverse: true);
-    _glowController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2000),
-    )..repeat(reverse: true);
-    _pulseAnim = Tween<double>(begin: 1.0, end: 1.05)
-        .animate(CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut));
-    _glowAnim = Tween<double>(begin: 0.5, end: 1.0)
-        .animate(CurvedAnimation(parent: _glowController, curve: Curves.easeInOut));
+    _pulseAnim = Tween<double>(begin: 1.0, end: 1.15).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
     _checkRegistration();
   }
 
   @override
   void dispose() {
     _pulseController.dispose();
-    _glowController.dispose();
+    _nameController.dispose();
+    _emailController.dispose();
+    _phoneController.dispose();
+    _pinController.dispose();
+    _confirmPinController.dispose();
     super.dispose();
   }
 
   Future<void> _checkRegistration() async {
+    await ref.read(userProvider.notifier).reloadFromPrefs();
     final prefs = await SharedPreferences.getInstance();
     final isRegistered = prefs.getBool('snfc_registered') ?? false;
     if (isRegistered) {
-      setState(() {
-        _isReturningUser = true;
-        _view = AuthView.login;
-      });
+      final email = prefs.getString('snfc_email') ?? '';
+      if (email.isNotEmpty) {
+        _emailController.text = email;
+      }
+      if (mounted) {
+        setState(() => _view = AuthView.login);
+      }
     }
   }
 
   void _switchView(AuthView view) {
-    setState(() => _view = view);
+    setState(() {
+      _view = view;
+      _cardStep = 'idle';
+    });
   }
 
-  Future<void> _handleLogin() async {
-    if (_pinController.text.length < 4) return;
+  void _showSnack(String msg, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: isError ? const Color(0xFFEF4444) : const Color(0xFF0369A1),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
 
-    // Guard: check if account exists
+  // ── Demo Quick Sign-In ─────────────────────────────────────────────────────
+
+  Future<void> _handleQuickDemoLogin() async {
+    setState(() => _isLoading = true);
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    await ref.read(userProvider.notifier).reloadFromPrefs();
     final prefs = await SharedPreferences.getInstance();
     final isRegistered = prefs.getBool('snfc_registered') ?? false;
-    if (!isRegistered) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('No account found. Please create one first.'),
-            backgroundColor: const Color(0xFF0369A1),
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        );
-      }
+    final savedName = prefs.getString('snfc_name') ?? '';
+    final savedEmail = prefs.getString('snfc_email') ?? '';
+
+    if (isRegistered && savedName.isNotEmpty) {
+      // Preserve the existing registered user's profile and balance!
+      ref.read(userProvider.notifier).armCard();
+      ref.read(userProvider.notifier).updateJcopCardInfo(
+            uid: prefs.getString('snfc_jcop_uid') ?? '04:7A:93:E2:10:88:01',
+            pinRetriesLeft: 5,
+            lifecycleState: 'ENROLLED',
+          );
+      setState(() => _isLoading = false);
+      _navigateToMain();
       return;
     }
 
-    setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 900));
+    final demoName = savedName.isNotEmpty ? savedName : 'Richard';
+    final demoEmail = savedEmail.isNotEmpty ? savedEmail : 'richard@tapat.ph';
+
+    await ref.read(userProvider.notifier).setUserData(
+          demoName,
+          demoEmail,
+          cardId: 'TAPAT_JCOP4_8821',
+          initialBalance: 5000.00,
+        );
+    ref.read(userProvider.notifier).armCard();
+    ref.read(userProvider.notifier).updateJcopCardInfo(
+          uid: '04:7A:93:E2:10:88:01',
+          pinRetriesLeft: 5,
+          lifecycleState: 'ENROLLED',
+        );
+
     setState(() => _isLoading = false);
     _navigateToMain();
   }
 
-  Future<void> _handleSignupContinue() async {
-    if (_pinController.text != _confirmPinController.text ||
-        _pinController.text.length < 4) return;
-    // Go to KYC ID verification
-    setState(() {
-      _kycStep = 0;
-      _selectedId = null;
-      _frontCaptured = false;
-      _backCaptured = false;
-      _faceCaptured = false;
-      _faceProgress = 0.0;
-    });
-    _switchView(AuthView.idVerification);
+  // ── Standard Login ─────────────────────────────────────────────────────────
+
+  Future<void> _handleLogin() async {
+    if (_pinController.text.length < 4) {
+      _showSnack('Please enter your 4 to 6-digit PIN', isError: true);
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    await ref.read(userProvider.notifier).reloadFromPrefs();
+    final prefs = await SharedPreferences.getInstance();
+    final isRegistered = prefs.getBool('snfc_registered') ?? false;
+    final savedName = prefs.getString('snfc_name') ?? '';
+
+    if (!isRegistered || savedName.isEmpty) {
+      final emailInput = _emailController.text.trim();
+      final prefix = emailInput.contains('@') ? emailInput.split('@').first : emailInput;
+      final displayName = prefix.isNotEmpty
+          ? prefix[0].toUpperCase() + prefix.substring(1)
+          : 'Cardholder';
+      final email = emailInput.isNotEmpty ? emailInput : 'user@tapat.ph';
+      await ref.read(userProvider.notifier).setUserData(
+            displayName,
+            email,
+            cardId: 'TAPAT_JCOP4_8821',
+            initialBalance: 5000.00,
+          );
+    }
+
+    ref.read(userProvider.notifier).updateJcopCardInfo(
+          uid: prefs.getString('snfc_jcop_uid') ?? '04:7A:93:E2:10:88:01',
+          pinRetriesLeft: 5,
+          lifecycleState: 'ENROLLED',
+        );
+
+    setState(() => _isLoading = false);
+    _navigateToMain();
   }
 
-  Future<void> _handleNFCTap() async {
+  // ── NFC Tap Login ──────────────────────────────────────────────────────────
+
+  Future<void> _handleNFCTapLogin({bool simulate = false}) async {
     if (_nfcTapping) return;
     setState(() => _nfcTapping = true);
+
     try {
-      final res = await NfcService.readTagFromNfc();
+      await ref.read(userProvider.notifier).reloadFromPrefs();
+      if (simulate) {
+        await Future.delayed(const Duration(milliseconds: 700));
+        await _handleQuickDemoLogin();
+        return;
+      }
+
+      final res = await NfcService.readCardIdentity();
       if (res['success'] == true) {
+        final uid = (res['uid'] as String?) ?? '04:7A:93:E2:10:88:01';
+        final cardId = (res['cardId'] as String?) ?? 'TAPAT_JCOP4_8821';
+        final owner = (res['owner'] as String?) ?? 'user@tapat.ph';
+        final cardName = (res['name'] as String?) ?? '';
+
+        final user = ref.read(userProvider);
+        if (user.name.isEmpty) {
+          final prefix = owner.contains('@') ? owner.split('@').first : owner;
+          final resolvedName = cardName.isNotEmpty
+              ? cardName
+              : (prefix.isNotEmpty && prefix.toLowerCase() != 'harry'
+                  ? prefix[0].toUpperCase() + prefix.substring(1)
+                  : 'Cardholder');
+          await ref.read(userProvider.notifier).setUserData(
+                resolvedName,
+                owner,
+                cardId: cardId,
+                initialBalance: 5000.00,
+              );
+        }
+        ref.read(userProvider.notifier).armCard();
+        ref.read(userProvider.notifier).updateJcopCardInfo(
+              uid: uid,
+              pinRetriesLeft: 5,
+              lifecycleState: 'ENROLLED',
+            );
         _navigateToMain();
+      } else {
+        _showSnack('NFC read timeout. Tap "Simulate Card" to proceed without card.', isError: true);
       }
     } catch (e) {
-      // Ignored for UI
+      _showSnack('NFC error: ${e.toString()}', isError: true);
     } finally {
-      setState(() => _nfcTapping = false);
+      if (mounted) setState(() => _nfcTapping = false);
     }
   }
 
-  Future<void> _simulateScan(VoidCallback onDone) async {
-    setState(() => _scanning = true);
-    await Future.delayed(const Duration(milliseconds: 2200));
-    setState(() => _scanning = false);
-    onDone();
-  }
+  // ── Signup Steps ───────────────────────────────────────────────────────────
 
-  Future<void> _simulateFaceScan() async {
-    setState(() => _scanning = true);
-    for (int i = 1; i <= 10; i++) {
-      await Future.delayed(const Duration(milliseconds: 280));
-      if (mounted) setState(() => _faceProgress = i / 10);
+  void _handleSignupContinue() {
+    final name = _nameController.text.trim();
+    final email = _emailController.text.trim();
+    final pin = _pinController.text.trim();
+    final confirm = _confirmPinController.text.trim();
+
+    if (name.length < 2) {
+      _showSnack('Please enter your full name', isError: true);
+      return;
     }
-    setState(() {
-      _scanning = false;
-      _faceCaptured = true;
+    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email)) {
+      _showSnack('Please enter a valid email address', isError: true);
+      return;
+    }
+    if (pin.length < 4) {
+      _showSnack('PIN must be at least 4-6 digits', isError: true);
+      return;
+    }
+    if (pin != confirm) {
+      _showSnack('PINs do not match', isError: true);
+      return;
+    }
+
+    _switchView(AuthView.registerCard);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _view == AuthView.registerCard && _cardStep == 'idle') {
+        _handleCardRegister(simulate: false);
+      }
     });
   }
 
-  Future<void> _handleCardRegister() async {
+  Future<void> _handleCardRegister({bool simulate = false}) async {
     setState(() => _cardStep = 'scanning');
     try {
-      final payload = NfcService.buildTokenPayload(
-          "new_card_${DateTime.now().millisecondsSinceEpoch}", null);
-      final res = await NfcService.writeTokenToNfc(payload);
+      final email = _emailController.text.trim().isNotEmpty ? _emailController.text.trim() : 'user@tapat.ph';
+      final name = _nameController.text.trim().isNotEmpty ? _nameController.text.trim() : 'Cardholder';
 
-      if (res['success'] == true) {
-        setState(() => _cardStep = 'success');
-        await Future.delayed(const Duration(milliseconds: 1100));
-
+      if (simulate) {
+        await Future.delayed(const Duration(milliseconds: 900));
+        const cardId = 'TAPAT_JCOP4_SIM_8821';
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('snfc_registered', true);
-
+        await prefs.setString('snfc_pin', _pinController.text.trim());
+        await NfcService.writeCardIdentity(cardId, email, name: name);
         await ref.read(userProvider.notifier).setUserData(
-              _nameController.text.isNotEmpty
-                  ? _nameController.text
-                  : "User",
-              _emailController.text.isNotEmpty
-                  ? _emailController.text
-                  : "user@example.com",
+              name,
+              email,
+              cardId: cardId,
+              initialBalance: 5000.00,
+            );
+        ref.read(userProvider.notifier).armCard();
+        ref.read(userProvider.notifier).updateJcopCardInfo(
+              uid: '04:7A:93:E2:10:88:01',
+              pinRetriesLeft: 5,
+              lifecycleState: 'ENROLLED',
             );
 
+        setState(() => _cardStep = 'success');
+        await Future.delayed(const Duration(milliseconds: 600));
+        _navigateToMain();
+        return;
+      }
+
+      final cardId = NfcService.generateCardId();
+      final res = await NfcService.writeCardIdentity(cardId, email, name: name);
+
+      if (res['success'] == true) {
+        final uid = (res['uid'] as String?) ?? '04:7A:93:E2:10:88:01';
+        setState(() => _cardStep = 'success');
+        await Future.delayed(const Duration(milliseconds: 600));
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('snfc_registered', true);
+        await prefs.setString('snfc_pin', _pinController.text.trim());
+        await ref.read(userProvider.notifier).setUserData(
+              name,
+              email,
+              cardId: cardId,
+              initialBalance: 5000.00,
+            );
+        ref.read(userProvider.notifier).armCard();
+        ref.read(userProvider.notifier).updateJcopCardInfo(
+              uid: uid,
+              pinRetriesLeft: 5,
+              lifecycleState: 'ENROLLED',
+            );
         _navigateToMain();
       } else {
         setState(() => _cardStep = 'idle');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(res['error'] ?? 'Registration failed')),
-          );
-        }
+        _showSnack('Card not detected. Use "Simulate Card Tap" if running on emulator.', isError: true);
       }
     } catch (e) {
       setState(() => _cardStep = 'idle');
+      _showSnack('Error: $e', isError: true);
     }
   }
 
   void _navigateToMain() {
     Navigator.pushReplacementNamed(context, '/main');
   }
+
+  // ── Background Glow ────────────────────────────────────────────────────────
 
   Widget _buildBackground() {
     return Container(
@@ -223,32 +343,30 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
             Color(0xFF031424),
             Color(0xFF041E35),
           ],
-          stops: [0.0, 0.3, 0.65, 1.0],
+          stops: [0.0, 0.35, 0.65, 1.0],
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),
       ),
       child: Stack(
         children: [
-          // Ambient teal glow top-left
           Positioned(
-            top: -100, left: -80,
+            top: -80, left: -80,
             child: Container(
-              width: 350, height: 350,
+              width: 320, height: 320,
               decoration: const BoxDecoration(
                 shape: BoxShape.circle,
-                color: Color(0x1A0369A1),
+                color: Color(0x220369A1),
               ),
             ),
           ),
-          // Ambient blue glow bottom-right
           Positioned(
-            bottom: -80, right: -60,
+            bottom: -60, right: -60,
             child: Container(
-              width: 280, height: 280,
+              width: 260, height: 260,
               decoration: const BoxDecoration(
                 shape: BoxShape.circle,
-                color: Color(0x160891B2),
+                color: Color(0x180891B2),
               ),
             ),
           ),
@@ -268,29 +386,27 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF0891B2).withOpacity(0.3)),
+        color: Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF0891B2).withValues(alpha: 0.35)),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Row(
         children: [
-          Icon(icon, color: const Color(0xFF38BDF8).withOpacity(0.7), size: 20),
+          Icon(icon, color: const Color(0xFF38BDF8).withValues(alpha: 0.8), size: 20),
           const SizedBox(width: 12),
           Expanded(
             child: TextField(
               controller: controller,
               obscureText: isPassword && !_showPass,
-              keyboardType:
-                  isNumber ? TextInputType.number : TextInputType.text,
+              keyboardType: isNumber ? TextInputType.number : TextInputType.text,
               maxLength: maxLength,
-              style: const TextStyle(color: Colors.white, fontSize: 15),
+              style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500),
               decoration: InputDecoration(
                 hintText: hint,
-                hintStyle: TextStyle(
-                    color: Colors.white.withOpacity(0.3), fontSize: 15),
+                hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 14),
                 border: InputBorder.none,
-                counterText: "",
+                counterText: '',
               ),
               onChanged: (_) => setState(() {}),
             ),
@@ -301,1228 +417,541 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     );
   }
 
-  // ─── Welcome View ─────────────────────────────────────────────────────────
+  // ── Welcome View ───────────────────────────────────────────────────────────
 
   Widget _buildWelcomeView() {
     return Padding(
-      padding: const EdgeInsets.all(24.0),
+      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          AnimatedBuilder(
-            animation: _pulseAnim,
-            builder: (_, child) => Transform.scale(
-              scale: _pulseAnim.value,
-              child: child,
-            ),
-            child: Container(
-              width: 96,
-              height: 96,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(32),
-                gradient: const LinearGradient(
-                  colors: [Color(0x440369A1), Color(0x330891B2)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                border: Border.all(color: const Color(0xFF0891B2).withOpacity(0.5)),
-                boxShadow: const [
-                  BoxShadow(color: Color(0x4D0369A1), blurRadius: 40)
-                ],
+          const Spacer(flex: 1),
+          // Shield Logo
+          Container(
+            width: 88, height: 88,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(28),
+              gradient: const LinearGradient(
+                colors: [Color(0xFF0369A1), Color(0xFF0891B2)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
-              child: const Icon(LucideIcons.shield,
-                  color: Color(0xFF38BDF8), size: 44),
+              border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.5)),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF0369A1).withValues(alpha: 0.5),
+                  blurRadius: 32,
+                  offset: const Offset(0, 8),
+                ),
+              ],
             ),
+            child: const Icon(LucideIcons.shield, color: Colors.white, size: 42),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
           const Text(
-            "tap@tan",
-            style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.w900,
-                letterSpacing: -0.5,
-                color: Colors.white),
+            'Bantay',
+            style: TextStyle(fontSize: 30, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: -0.5),
           ),
+          const SizedBox(height: 4),
           Text(
-            "Java Card · Privacy-first · Tokenized",
-            style: TextStyle(
-                fontSize: 13, color: Colors.white.withOpacity(0.4)),
+            'Dual-Layered Defense & JCOP J3R150 Hardware Security',
+            style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.5)),
+            textAlign: TextAlign.center,
           ),
           const SizedBox(height: 32),
+
+          // Feature pills
           ...[
-            {
-              'icon': LucideIcons.shield,
-              'label': 'Hardware-secured Java Card auth',
-              'color': const Color(0xFF0369A1)
-            },
-            {
-              'icon': LucideIcons.wifi,
-              'label': 'NFC tap-to-authenticate',
-              'color': const Color(0xFF06B6D4)
-            },
-            {
-              'icon': LucideIcons.zap,
-              'label': 'Single-use tokenized payments',
-              'color': const Color(0xFF0891B2)
-            },
+            {'icon': LucideIcons.shieldCheck, 'label': 'JCOP J3R150 Smart Card Security', 'color': const Color(0xFF0369A1)},
+            {'icon': LucideIcons.store, 'label': 'Dual-Layered Protection with Sar-E Store', 'color': const Color(0xFF0891B2)},
+            {'icon': LucideIcons.keyRound, 'label': 'Hardware-Signed ECDSA P-256 Key', 'color': const Color(0xFF06B6D4)},
           ].map((item) => Padding(
-                padding: const EdgeInsets.only(bottom: 8.0),
+                padding: const EdgeInsets.only(bottom: 10.0),
                 child: GlassContainer(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  backgroundColor: Colors.white.withOpacity(0.04),
-                  border: Border.all(
-                      color: (item['color'] as Color).withOpacity(0.2)),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  backgroundColor: Colors.white.withValues(alpha: 0.04),
+                  border: Border.all(color: (item['color'] as Color).withValues(alpha: 0.3)),
                   child: Row(
                     children: [
                       Container(
-                        width: 32,
-                        height: 32,
+                        width: 34, height: 34,
                         decoration: BoxDecoration(
-                          color: (item['color'] as Color).withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(12),
+                          color: (item['color'] as Color).withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(10),
                         ),
-                        child: Icon(item['icon'] as IconData,
-                            size: 16, color: item['color'] as Color),
+                        child: Icon(item['icon'] as IconData, size: 17, color: item['color'] as Color),
                       ),
                       const SizedBox(width: 12),
-                      Text(item['label'] as String,
-                          style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white.withOpacity(0.8))),
+                      Expanded(
+                        child: Text(
+                          item['label'] as String,
+                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Colors.white.withValues(alpha: 0.85)),
+                        ),
+                      ),
                     ],
                   ),
                 ),
               )),
-          const Spacer(),
-          // Sign In — only shown if registered
-          if (_isReturningUser)
-            GlassButton(
-              onPressed: () => _switchView(AuthView.login),
-              child: const Text("Sign In",
-                  style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white)),
-            ),
-          if (!_isReturningUser)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(14),
-                color: Colors.white.withOpacity(0.04),
-                border: Border.all(color: Colors.white.withOpacity(0.10)),
-              ),
-              child: Center(
-                child: Text(
-                  "Sign In",
-                  style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white.withOpacity(0.3)),
-                ),
-              ),
-            ),
-          if (!_isReturningUser)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text(
-                "No account yet — create one to sign in",
-                style: TextStyle(
-                    fontSize: 11,
-                    color: const Color(0xFF38BDF8).withOpacity(0.6)),
-                textAlign: TextAlign.center,
-              ),
-            ),
+
+          const Spacer(flex: 2),
+
+          // Sign In button
+          GlassButton(
+            onPressed: () => _switchView(AuthView.login),
+            child: const Text('Sign In', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Colors.white)),
+          ),
           const SizedBox(height: 12),
+
+          // Create Account button
           GlassButton(
             gradientColors: const [Color(0xFF0C1E35), Color(0xFF0A1628)],
             onPressed: () => _switchView(AuthView.signup),
-            child: const Text("Create Account",
-                style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ─── Login View ───────────────────────────────────────────────────────────
-
-  Widget _buildLoginView() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 40),
-          if (!_isReturningUser)
-            GestureDetector(
-              onTap: () => _switchView(AuthView.welcome),
-              child: Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                        color: const Color(0xFF0891B2).withOpacity(0.3))),
-                child: const Icon(LucideIcons.arrowLeft,
-                    size: 18, color: Color(0xFF38BDF8)),
-              ),
-            ),
-          const SizedBox(height: 20),
-          const Text("Welcome back",
-              style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.white)),
-          Text("Enter your PIN to continue",
-              style: TextStyle(
-                  fontSize: 13, color: Colors.white.withOpacity(0.4))),
-          const SizedBox(height: 24),
-          _buildTextField(
-            controller: _emailController,
-            icon: LucideIcons.mail,
-            hint: "Email address",
+            child: const Text('Create Account', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white)),
           ),
           const SizedBox(height: 12),
-          _buildTextField(
-            controller: _pinController,
-            icon: LucideIcons.lock,
-            hint: "4-Digit PIN",
-            isPassword: true,
-            isNumber: true,
-            maxLength: 4,
-          ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: Text("Forgot PIN?",
-                style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: const Color(0xFF38BDF8).withOpacity(0.8))),
-          ),
-          const SizedBox(height: 24),
-          GlassButton(
-            onPressed:
-                _pinController.text.length == 4 ? _handleLogin : null,
-            isLoading: _isLoading,
-            child: const Text("Sign In",
-                style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white)),
-          ),
-          if (_isReturningUser) ...[
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                Expanded(
-                    child: Container(
-                        height: 1,
-                        color: Colors.white.withOpacity(0.08))),
-                Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Text("or",
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.white.withOpacity(0.3)))),
-                Expanded(
-                    child: Container(
-                        height: 1,
-                        color: Colors.white.withOpacity(0.08))),
-              ],
-            ),
-            const SizedBox(height: 16),
-            GlassButton(
-              onPressed: _nfcTapping ? null : _handleNFCTap,
-              gradientColors: const [Color(0x4006B6D4), Color(0x330369A1)],
+
+          // Quick Demo Sign-in for presentation & thesis panel
+          GestureDetector(
+            onTap: _handleQuickDemoLogin,
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 10),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  if (_nfcTapping) ...[
-                    const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                            color: Color(0xFF06B6D4), strokeWidth: 2)),
-                    const SizedBox(width: 12),
-                    const Text("Reading Java Card...",
-                        style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF67E8F9))),
-                  ] else ...[
-                    const Icon(LucideIcons.wifi,
-                        color: Color(0xFF38BDF8), size: 20),
-                    const SizedBox(width: 12),
-                    const Text("Tap NFC Card to Unlock",
-                        style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF67E8F9))),
-                  ]
+                  const Icon(LucideIcons.zap, size: 14, color: Color(0xFFF59E0B)),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Quick Demo Sign-In (Pre-Loaded Account)',
+                    style: TextStyle(color: const Color(0xFFF59E0B).withValues(alpha: 0.9), fontSize: 12, fontWeight: FontWeight.w700),
+                  ),
                 ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
+      ),
+    );
+  }
+
+  // ── Login View ─────────────────────────────────────────────────────────────
+
+  Widget _buildLoginView() {
+    return ListView(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
+      children: [
+        const SizedBox(height: 30),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: GestureDetector(
+            onTap: () => _switchView(AuthView.welcome),
+            child: Container(
+              width: 38, height: 38,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(LucideIcons.arrowLeft, color: Colors.white, size: 18),
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+        const Text('Welcome Back', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.white)),
+        const SizedBox(height: 4),
+        Text('Enter your email and 6-digit PIN to sign in', style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.5))),
+        const SizedBox(height: 28),
+
+        // Email field
+        _buildTextField(
+          controller: _emailController,
+          icon: LucideIcons.mail,
+          hint: 'Email address (e.g. richard@tapat.ph)',
+        ),
+        const SizedBox(height: 14),
+
+        // 6-digit PIN field
+        _buildTextField(
+          controller: _pinController,
+          icon: LucideIcons.lock,
+          hint: '6-Digit Card PIN',
+          isPassword: true,
+          isNumber: true,
+          maxLength: 6,
+          suffix: GestureDetector(
+            onTap: () => setState(() => _showPass = !_showPass),
+            child: Icon(
+              _showPass ? LucideIcons.eyeOff : LucideIcons.eye,
+              color: Colors.white.withValues(alpha: 0.4),
+              size: 18,
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+
+        // Quick demo hint
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            GestureDetector(
+              onTap: () async {
+                final prefs = await SharedPreferences.getInstance();
+                final savedEmail = prefs.getString('snfc_email') ?? '';
+                _emailController.text =
+                    savedEmail.isNotEmpty ? savedEmail : 'richard@tapat.ph';
+                _pinController.text =
+                    prefs.getString('snfc_pin') ?? '123456';
+                if (mounted) setState(() {});
+              },
+              child: Text(
+                'Autofill Registered Credentials',
+                style: TextStyle(color: const Color(0xFF38BDF8).withValues(alpha: 0.8), fontSize: 11, fontWeight: FontWeight.w600),
+              ),
+            ),
+            GestureDetector(
+              onTap: () => _showSnack('PIN can be reset via registered email verification.'),
+              child: Text(
+                'Forgot PIN?',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11, fontWeight: FontWeight.w600),
               ),
             ),
           ],
-          const Spacer(),
-          Center(
-            child: GestureDetector(
-              onTap: () => _switchView(AuthView.signup),
-              child: RichText(
-                text: TextSpan(
-                  text: "No account? ",
-                  style: TextStyle(
-                      fontSize: 14, color: Colors.white.withOpacity(0.4)),
-                  children: const [
-                    TextSpan(
-                      text: "Create one",
-                      style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF38BDF8)),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ─── Signup View ──────────────────────────────────────────────────────────
-
-  Widget _buildSignupView() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 40),
-          GestureDetector(
-            onTap: () => _switchView(AuthView.welcome),
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                      color: const Color(0xFF0891B2).withOpacity(0.3))),
-              child: const Icon(LucideIcons.arrowLeft,
-                  size: 18, color: Color(0xFF38BDF8)),
-            ),
-          ),
-          const SizedBox(height: 20),
-          const Text("Create account",
-              style: TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w900,
-                  color: Colors.white)),
-          Text("Personal details & identity verification required",
-              style: TextStyle(
-                  fontSize: 13, color: Colors.white.withOpacity(0.4))),
-          const SizedBox(height: 24),
-          _buildTextField(
-              controller: _nameController,
-              icon: LucideIcons.user,
-              hint: "Full name"),
-          const SizedBox(height: 12),
-          _buildTextField(
-              controller: _emailController,
-              icon: LucideIcons.mail,
-              hint: "Email address"),
-          const SizedBox(height: 12),
-          _buildTextField(
-              controller: _pinController,
-              icon: LucideIcons.lock,
-              hint: "4-Digit PIN",
-              isPassword: true,
-              isNumber: true,
-              maxLength: 4),
-          const SizedBox(height: 12),
-          _buildTextField(
-            controller: _confirmPinController,
-            icon: LucideIcons.lock,
-            hint: "Confirm PIN",
-            isPassword: true,
-            isNumber: true,
-            maxLength: 4,
-            suffix: GestureDetector(
-              onTap: () => setState(() => _showPass = !_showPass),
-              child: Icon(
-                  _showPass ? LucideIcons.eyeOff : LucideIcons.eye,
-                  color: Colors.white.withOpacity(0.3),
-                  size: 18),
-            ),
-          ),
-          if (_confirmPinController.text.length == 4 &&
-              _confirmPinController.text != _pinController.text)
-            const Padding(
-              padding: EdgeInsets.only(top: 8.0, left: 8.0),
-              child: Text("PINs do not match",
-                  style: TextStyle(color: Colors.redAccent, fontSize: 12)),
-            ),
-          const SizedBox(height: 16),
-          // KYC badge
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0369A1).withOpacity(0.12),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                  color: const Color(0xFF0891B2).withOpacity(0.3)),
-            ),
-            child: Row(
-              children: [
-                const Icon(LucideIcons.shield,
-                    size: 15, color: Color(0xFF38BDF8)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    "ID verification required — you\'ll scan a gov\'t ID + face next",
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.white.withOpacity(0.7)),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          GlassButton(
-            onPressed: (_pinController.text.length == 4 &&
-                    _pinController.text == _confirmPinController.text &&
-                    _nameController.text.isNotEmpty &&
-                    _emailController.text.isNotEmpty)
-                ? _handleSignupContinue
-                : null,
-            child: const Text("Continue to ID Verification",
-                style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white)),
-          ),
-          const Spacer(),
-          Center(
-            child: GestureDetector(
-              onTap: () => _switchView(AuthView.login),
-              child: RichText(
-                text: TextSpan(
-                  text: "Already have an account? ",
-                  style: TextStyle(
-                      fontSize: 14, color: Colors.white.withOpacity(0.4)),
-                  children: const [
-                    TextSpan(
-                      text: "Sign in",
-                      style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF38BDF8)),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ─── ID Verification View ─────────────────────────────────────────────────
-
-  Widget _buildIdVerificationView() {
-    final steps = ['Select ID', 'Front Scan', 'Back Scan', 'Face Check'];
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 40),
-          // Header
-          Row(
-            children: [
-              GestureDetector(
-                onTap: _kycStep > 0
-                    ? () => setState(() => _kycStep--)
-                    : () => _switchView(AuthView.signup),
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                          color: const Color(0xFF0891B2).withOpacity(0.3))),
-                  child: const Icon(LucideIcons.arrowLeft,
-                      size: 18, color: Color(0xFF38BDF8)),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text("Identity Verification",
-                      style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white)),
-                  Text("Step ${_kycStep + 1} of 4 — ${steps[_kycStep]}",
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white.withOpacity(0.4))),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-
-          // Step progress
-          Row(
-            children: List.generate(4, (i) {
-              final done = i < _kycStep;
-              final active = i == _kycStep;
-              return Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
-                    height: 4,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(2),
-                      gradient: done || active
-                          ? const LinearGradient(
-                              colors: [Color(0xFF0369A1), Color(0xFF0891B2)])
-                          : null,
-                      color: done || active
-                          ? null
-                          : Colors.white.withOpacity(0.12),
-                    ),
-                  ),
-                ),
-              );
-            }),
-          ),
-          const SizedBox(height: 24),
-
-          // Step content
-          Expanded(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
-              child: _kycStep == 0
-                  ? _buildIdSelectStep()
-                  : _kycStep == 1
-                      ? _buildIdScanStep(isFront: true)
-                      : _kycStep == 2
-                          ? _buildIdScanStep(isFront: false)
-                          : _buildFaceStep(),
-            ),
-          ),
-
-          // Action button
-          _buildKycActionButton(),
-          const SizedBox(height: 16),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildIdSelectStep() {
-    return SingleChildScrollView(
-      key: const ValueKey('id-select'),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text("Select your government-issued ID",
-              style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white.withOpacity(0.8))),
-          const SizedBox(height: 6),
-          Text("Only accepted Philippine national IDs are listed",
-              style: TextStyle(
-                  fontSize: 12, color: Colors.white.withOpacity(0.4))),
-          const SizedBox(height: 16),
-          ..._govIds.map((id) {
-            final selected = _selectedId == id;
-            return GestureDetector(
-              onTap: () => setState(() => _selectedId = id),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 14),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  gradient: selected
-                      ? const LinearGradient(
-                          colors: [
-                            Color(0x400369A1),
-                            Color(0x300891B2)
-                          ],
-                        )
-                      : null,
-                  color: selected ? null : Colors.white.withOpacity(0.04),
-                  border: Border.all(
-                    color: selected
-                        ? const Color(0xFF0891B2)
-                        : Colors.white.withOpacity(0.08),
-                    width: selected ? 1.5 : 1,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(10),
-                        color: selected
-                            ? const Color(0xFF0891B2).withOpacity(0.2)
-                            : Colors.white.withOpacity(0.06),
-                      ),
-                      child: Icon(LucideIcons.creditCard,
-                          size: 16,
-                          color: selected
-                              ? const Color(0xFF38BDF8)
-                              : Colors.white.withOpacity(0.4)),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Text(id,
-                          style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: selected
-                                  ? FontWeight.w700
-                                  : FontWeight.w500,
-                              color: selected
-                                  ? Colors.white
-                                  : Colors.white.withOpacity(0.7))),
-                    ),
-                    if (selected)
-                      const Icon(LucideIcons.checkCircle,
-                          size: 18, color: Color(0xFF38BDF8)),
-                  ],
-                ),
-              ),
-            );
-          }),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0369A1).withOpacity(0.08),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                  color: const Color(0xFF0891B2).withOpacity(0.2)),
-            ),
-            child: Row(
-              children: [
-                const Icon(LucideIcons.info,
-                    size: 14, color: Color(0xFF38BDF8)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    "Your ID is verified locally and never stored on external servers.",
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.white.withOpacity(0.5)),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildIdScanStep({required bool isFront}) {
-    final captured = isFront ? _frontCaptured : _backCaptured;
-    final key = ValueKey(isFront ? 'front' : 'back');
-
-    return Column(
-      key: key,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Text(
-          isFront ? "Scan Front of ID" : "Scan Back of ID",
-          style: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              color: Colors.white),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 6),
-        Text(
-          isFront
-              ? "Place the front of your ${_selectedId ?? 'ID'} inside the frame"
-              : "Now flip your ID and align the back inside the frame",
-          style:
-              TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.45)),
-          textAlign: TextAlign.center,
         ),
         const SizedBox(height: 24),
 
-        // Camera frame
-        Center(
-          child: AnimatedBuilder(
-            animation: _glowAnim,
-            builder: (_, child) => Container(
-              width: double.infinity,
-              height: 200,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: captured
-                      ? const Color(0xFF10B981)
-                      : const Color(0xFF0891B2)
-                          .withOpacity(0.6 + _glowAnim.value * 0.4),
-                  width: 2,
-                ),
-                color: Colors.black.withOpacity(0.4),
-                boxShadow: [
-                  BoxShadow(
-                    color: captured
-                        ? const Color(0xFF10B981).withOpacity(0.3)
-                        : const Color(0xFF0891B2)
-                            .withOpacity(0.15 * _glowAnim.value),
-                    blurRadius: 24,
-                  ),
-                ],
-              ),
-              child: child,
-            ),
-            child: Stack(
-              children: [
-                // Corner marks
-                ..._buildScanCorners(captured),
-
-                // Center content
-                Center(
-                  child: _scanning
-                      ? Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const CircularProgressIndicator(
-                              color: Color(0xFF0891B2),
-                              strokeWidth: 2.5,
-                            ),
-                            const SizedBox(height: 12),
-                            Text("Scanning...",
-                                style: TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.white.withOpacity(0.6))),
-                          ],
-                        )
-                      : captured
-                          ? Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Container(
-                                  width: 60,
-                                  height: 60,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: const Color(0xFF10B981)
-                                        .withOpacity(0.2),
-                                  ),
-                                  child: const Icon(LucideIcons.checkCircle,
-                                      color: Color(0xFF34D399), size: 32),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                    isFront
-                                        ? "Front captured ✓"
-                                        : "Back captured ✓",
-                                    style: const TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w700,
-                                        color: Color(0xFF34D399))),
-                              ],
-                            )
-                          : Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  isFront
-                                      ? LucideIcons.creditCard
-                                      : LucideIcons.scanLine,
-                                  size: 40,
-                                  color: const Color(0xFF38BDF8)
-                                      .withOpacity(0.5),
-                                ),
-                                const SizedBox(height: 10),
-                                Text(
-                                    "Tap 'Capture' to scan ${isFront ? 'front' : 'back'}",
-                                    style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.white.withOpacity(0.4))),
-                              ],
-                            ),
-                ),
-              ],
-            ),
-          ),
+        // Sign In Button
+        GlassButton(
+          onPressed: _handleLogin,
+          isLoading: _isLoading,
+          child: const Text('Sign In', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Colors.white)),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 16),
 
-        if (!captured)
-          GestureDetector(
-            onTap: _scanning
-                ? null
-                : () => _simulateScan(() {
-                      setState(() {
-                        if (isFront) {
-                          _frontCaptured = true;
-                        } else {
-                          _backCaptured = true;
-                        }
-                      });
-                    }),
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                    colors: [Color(0xFF0369A1), Color(0xFF0891B2)]),
-                borderRadius: BorderRadius.circular(50),
-                boxShadow: const [
-                  BoxShadow(
-                      color: Color(0x400891B2),
-                      blurRadius: 20,
-                      offset: Offset(0, 6))
-                ],
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(LucideIcons.camera,
-                      size: 16, color: Colors.white),
-                  const SizedBox(width: 8),
-                  Text(
-                    _scanning ? "Scanning..." : "Capture",
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700),
-                  ),
-                ],
-              ),
+        // Divider
+        Row(
+          children: [
+            Expanded(child: Container(height: 1, color: Colors.white.withValues(alpha: 0.1))),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Text('OR', style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 11, fontWeight: FontWeight.bold)),
             ),
-          ),
-      ],
-    );
-  }
-
-  List<Widget> _buildScanCorners(bool captured) {
-    final color = captured
-        ? const Color(0xFF34D399)
-        : const Color(0xFF38BDF8);
-    const size = 20.0;
-    const thick = 2.5;
-    return [
-      Positioned(
-          top: 12, left: 12,
-          child: _corner(color, size, thick, top: true, left: true)),
-      Positioned(
-          top: 12, right: 12,
-          child: _corner(color, size, thick, top: true, left: false)),
-      Positioned(
-          bottom: 12, left: 12,
-          child: _corner(color, size, thick, top: false, left: true)),
-      Positioned(
-          bottom: 12, right: 12,
-          child: _corner(color, size, thick, top: false, left: false)),
-    ];
-  }
-
-  Widget _corner(Color color, double size, double thick,
-      {required bool top, required bool left}) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: CustomPaint(
-        painter: _CornerPainter(
-            color: color, thick: thick, top: top, left: left),
-      ),
-    );
-  }
-
-  Widget _buildFaceStep() {
-    return Column(
-      key: const ValueKey('face'),
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        const Text(
-          "Face Recognition",
-          style: TextStyle(
-              fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white),
-          textAlign: TextAlign.center,
+            Expanded(child: Container(height: 1, color: Colors.white.withValues(alpha: 0.1))),
+          ],
         ),
-        const SizedBox(height: 6),
-        Text(
-          "Look directly at the camera and keep your face centered",
-          style:
-              TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.45)),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 16),
 
-        // Face oval frame
-        Center(
-          child: AnimatedBuilder(
-            animation: _glowAnim,
-            builder: (_, child) => Container(
-              width: 240,
-              height: 280,
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.35),
-                borderRadius: BorderRadius.circular(120),
-                border: Border.all(
-                  color: _faceCaptured
-                      ? const Color(0xFF10B981)
-                      : const Color(0xFF0891B2)
-                          .withOpacity(0.5 + _glowAnim.value * 0.5),
-                  width: 2.5,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: _faceCaptured
-                        ? const Color(0xFF10B981).withOpacity(0.35)
-                        : const Color(0xFF0891B2)
-                            .withOpacity(0.2 * _glowAnim.value),
-                    blurRadius: 30,
-                  ),
+        // Tap Card to Login button
+        GestureDetector(
+          onTap: () => _handleNFCTapLogin(simulate: false),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  const Color(0xFF0369A1).withValues(alpha: 0.25),
+                  const Color(0xFF0891B2).withValues(alpha: 0.2),
                 ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
-              child: child,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFF0891B2).withValues(alpha: 0.4)),
             ),
-            child: Column(
+            child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                if (_faceCaptured) ...[
-                  Container(
-                    width: 72,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: const Color(0xFF10B981).withOpacity(0.2),
-                    ),
-                    child: const Icon(LucideIcons.checkCircle,
-                        color: Color(0xFF34D399), size: 40),
-                  ),
-                  const SizedBox(height: 10),
-                  const Text("Identity Verified",
-                      style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF34D399))),
-                ] else if (_scanning) ...[
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: 56,
-                    height: 56,
-                    child: CircularProgressIndicator(
-                      value: _faceProgress,
-                      color: const Color(0xFF0891B2),
-                      backgroundColor: Colors.white.withOpacity(0.08),
-                      strokeWidth: 4,
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    "${(_faceProgress * 100).toInt()}%",
-                    style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF38BDF8)),
-                  ),
-                  const SizedBox(height: 6),
-                  Text("Analyzing biometrics...",
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white.withOpacity(0.5))),
-                ] else ...[
-                  Icon(LucideIcons.user,
-                      size: 56,
-                      color: const Color(0xFF38BDF8).withOpacity(0.3)),
-                  const SizedBox(height: 10),
-                  Text("Position your face here",
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white.withOpacity(0.4))),
-                ],
+                if (_nfcTapping)
+                  const SizedBox(
+                    width: 18, height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF38BDF8)),
+                  )
+                else
+                  const Icon(LucideIcons.wifi, color: Color(0xFF38BDF8), size: 18),
+                const SizedBox(width: 10),
+                Text(
+                  _nfcTapping ? 'Waiting for Tapat Card Tap...' : 'Tap Tapat Card to Unlock',
+                  style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 14, fontWeight: FontWeight.bold),
+                ),
               ],
             ),
           ),
         ),
+        const SizedBox(height: 10),
 
-        const SizedBox(height: 20),
-
-        // Liveness instructions
-        if (!_faceCaptured && !_scanning) ...[
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0369A1).withOpacity(0.10),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                  color: const Color(0xFF0891B2).withOpacity(0.2)),
-            ),
-            child: Column(
-              children: [
-                _buildInstruction(
-                    LucideIcons.sun, "Ensure good lighting on your face"),
-                const SizedBox(height: 6),
-                _buildInstruction(
-                    LucideIcons.eye, "Remove glasses if possible"),
-                const SizedBox(height: 6),
-                _buildInstruction(
-                    LucideIcons.shield, "Custom liveness detection — not device biometrics"),
-              ],
+        // Simulate NFC tap for testing without physical card
+        Center(
+          child: TextButton(
+            onPressed: () => _handleNFCTapLogin(simulate: true),
+            child: Text(
+              'Simulate Card Tap (Demo Mode)',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12),
             ),
           ),
-          const SizedBox(height: 16),
-          GestureDetector(
-            onTap: _simulateFaceScan,
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                    colors: [Color(0xFF0369A1), Color(0xFF0891B2)]),
-                borderRadius: BorderRadius.circular(50),
-                boxShadow: const [
-                  BoxShadow(
-                      color: Color(0x400891B2),
-                      blurRadius: 20,
-                      offset: Offset(0, 6))
-                ],
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(LucideIcons.scanFace, size: 16, color: Colors.white),
-                  SizedBox(width: 8),
-                  Text("Start Face Scan",
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700)),
+        ),
+
+        const SizedBox(height: 16),
+        Center(
+          child: GestureDetector(
+            onTap: () => _switchView(AuthView.signup),
+            child: RichText(
+              text: TextSpan(
+                text: 'Don\'t have an account? ',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13),
+                children: const [
+                  TextSpan(
+                    text: 'Create One',
+                    style: TextStyle(color: Color(0xFF38BDF8), fontWeight: FontWeight.bold),
+                  ),
                 ],
               ),
             ),
           ),
-        ],
-
-        if (_faceProgress > 0 && !_faceCaptured)
-          Padding(
-            padding: const EdgeInsets.only(top: 16),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: _faceProgress,
-                backgroundColor: Colors.white.withOpacity(0.08),
-                valueColor:
-                    const AlwaysStoppedAnimation<Color>(Color(0xFF0891B2)),
-                minHeight: 4,
-              ),
-            ),
-          ),
+        ),
       ],
     );
   }
 
-  Widget _buildInstruction(IconData icon, String text) {
-    return Row(
+  // ── Signup View ────────────────────────────────────────────────────────────
+
+  Widget _buildSignupView() {
+    return ListView(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
       children: [
-        Icon(icon, size: 14, color: const Color(0xFF38BDF8).withOpacity(0.7)),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(text,
-              style: TextStyle(
-                  fontSize: 11, color: Colors.white.withOpacity(0.55))),
+        const SizedBox(height: 30),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: GestureDetector(
+            onTap: () => _switchView(AuthView.welcome),
+            child: Container(
+              width: 38, height: 38,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(LucideIcons.arrowLeft, color: Colors.white, size: 18),
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+        const Text('Create Account', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.white)),
+        const SizedBox(height: 4),
+        Text('Step 1 of 2: Profile & 6-Digit PIN', style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.5))),
+        const SizedBox(height: 24),
+
+        _buildTextField(
+          controller: _nameController,
+          icon: LucideIcons.user,
+          hint: 'Full Name (e.g. Richard)',
+        ),
+        const SizedBox(height: 12),
+
+        _buildTextField(
+          controller: _emailController,
+          icon: LucideIcons.mail,
+          hint: 'Email address',
+        ),
+        const SizedBox(height: 12),
+
+        _buildTextField(
+          controller: _phoneController,
+          icon: LucideIcons.phone,
+          hint: 'Mobile Number (+63 9XX XXX XXXX)',
+          isNumber: true,
+        ),
+        const SizedBox(height: 12),
+
+        _buildTextField(
+          controller: _pinController,
+          icon: LucideIcons.lock,
+          hint: '6-Digit Card PIN',
+          isPassword: true,
+          isNumber: true,
+          maxLength: 6,
+        ),
+        const SizedBox(height: 12),
+
+        _buildTextField(
+          controller: _confirmPinController,
+          icon: LucideIcons.lock,
+          hint: 'Confirm 6-Digit Card PIN',
+          isPassword: true,
+          isNumber: true,
+          maxLength: 6,
+        ),
+        const SizedBox(height: 24),
+
+        GlassButton(
+          onPressed: _handleSignupContinue,
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text('Continue to Tapat Card', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Colors.white)),
+              SizedBox(width: 8),
+              Icon(LucideIcons.arrowRight, size: 16, color: Colors.white),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        Center(
+          child: GestureDetector(
+            onTap: () => _switchView(AuthView.login),
+            child: RichText(
+              text: TextSpan(
+                text: 'Already registered? ',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13),
+                children: const [
+                  TextSpan(
+                    text: 'Sign In',
+                    style: TextStyle(color: Color(0xFF38BDF8), fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildKycActionButton() {
-    bool canProceed = false;
-    String label = "Next";
-
-    if (_kycStep == 0) {
-      canProceed = _selectedId != null;
-      label = "Continue";
-    } else if (_kycStep == 1) {
-      canProceed = _frontCaptured;
-      label = "Next: Back of ID";
-    } else if (_kycStep == 2) {
-      canProceed = _backCaptured;
-      label = "Next: Face Check";
-    } else if (_kycStep == 3) {
-      canProceed = _faceCaptured;
-      label = "Complete Verification";
-    }
-
-    return GlassButton(
-      onPressed: canProceed
-          ? () {
-              if (_kycStep < 3) {
-                setState(() => _kycStep++);
-              } else {
-                _switchView(AuthView.registerCard);
-              }
-            }
-          : null,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(label,
-              style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white)),
-          const SizedBox(width: 8),
-          const Icon(LucideIcons.arrowRight, size: 16, color: Colors.white),
-        ],
-      ),
-    );
-  }
-
-  // ─── Register Card View ───────────────────────────────────────────────────
+  // ── Register Tapat Card View ───────────────────────────────────────────────
 
   Widget _buildRegisterCardView() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          const SizedBox(height: 60),
-          const Text("Register Java Card",
-              style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w900,
-                  color: Colors.white)),
-          Text("Tap your card once to bind it to your account",
-              style: TextStyle(
-                  fontSize: 13, color: Colors.white.withOpacity(0.4))),
-          const Spacer(),
-          GestureDetector(
-            onTap: _cardStep == 'idle' ? _handleCardRegister : null,
-            child: AnimatedBuilder(
-              animation: _pulseAnim,
-              builder: (_, child) => Transform.scale(
-                scale: _cardStep == 'idle' ? _pulseAnim.value : 1.0,
-                child: child,
-              ),
+          const SizedBox(height: 30),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: GestureDetector(
+              onTap: () => _switchView(AuthView.signup),
               child: Container(
-                width: 140,
-                height: 140,
+                width: 38, height: 38,
                 decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: _cardStep == 'success'
-                        ? Colors.green
-                        : const Color(0xFF0891B2),
-                    width: 2,
-                  ),
-                  gradient: LinearGradient(
-                    colors: _cardStep == 'success'
-                        ? [
-                            Colors.green.withOpacity(0.2),
-                            Colors.greenAccent.withOpacity(0.2)
-                          ]
-                        : [
-                            const Color(0x330891B2),
-                            const Color(0x330369A1)
-                          ],
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: _cardStep == 'success'
-                          ? Colors.green.withOpacity(0.5)
-                          : const Color(0xFF0891B2).withOpacity(0.5),
-                      blurRadius: 40,
-                    )
-                  ],
+                  color: Colors.white.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                child: Center(
-                  child: _cardStep == 'success'
-                      ? const Icon(LucideIcons.checkCircle,
-                          color: Colors.greenAccent, size: 48)
-                      : _cardStep == 'scanning'
-                          ? const CircularProgressIndicator(
-                              color: Color(0xFF0891B2))
-                          : const Icon(LucideIcons.wifi,
-                              color: Color(0xFF38BDF8), size: 48),
-                ),
+                child: const Icon(LucideIcons.arrowLeft, color: Colors.white, size: 18),
               ),
             ),
           ),
-          const SizedBox(height: 40),
-          GlassContainer(
-            padding: const EdgeInsets.all(16),
-            backgroundColor: Colors.white.withOpacity(0.04),
-            child: Row(
-              children: [
-                Container(
-                  width: 48,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                        colors: [Color(0xFF0369A1), Color(0xFF0891B2)]),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Container(
-                          width: 12,
-                          height: 8,
-                          color: Colors.yellow.withOpacity(0.8)),
+          const SizedBox(height: 20),
+          const Text('Bind Tapat Card', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.white)),
+          const SizedBox(height: 4),
+          Text(
+            'Step 2 of 2: Hold your JCOP J3R150 smart card to the back of your phone',
+            style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.5)),
+            textAlign: TextAlign.center,
+          ),
+          const Spacer(),
+
+          // Animated NFC Target
+          AnimatedBuilder(
+            animation: _pulseAnim,
+            builder: (context, child) {
+              return Stack(
+                alignment: Alignment.center,
+                children: [
+                  Container(
+                    width: 180 * _pulseAnim.value,
+                    height: 180 * _pulseAnim.value,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: const Color(0xFF0891B2).withValues(alpha: 0.12 / _pulseAnim.value),
                     ),
                   ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                          _cardStep == 'success'
-                              ? "Java Card Registered ✓"
-                              : "Java Card",
-                          style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white)),
-                      Text(
-                        _cardStep == 'idle'
-                            ? "Not yet linked to account"
-                            : _cardStep == 'scanning'
-                                ? "Reading secure element..."
-                                : "Bound to your account",
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.white.withOpacity(0.4)),
-                      ),
-                    ],
+                  Container(
+                    width: 130 * _pulseAnim.value,
+                    height: 130 * _pulseAnim.value,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: const Color(0xFF0369A1).withValues(alpha: 0.2 / _pulseAnim.value),
+                    ),
                   ),
-                )
-              ],
+                  Container(
+                    width: 96, height: 96,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: _cardStep == 'success'
+                            ? [const Color(0xFF10B981), const Color(0xFF059669)]
+                            : [const Color(0xFF0369A1), const Color(0xFF0891B2)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _cardStep == 'success'
+                              ? const Color(0xFF10B981).withValues(alpha: 0.5)
+                              : const Color(0xFF0891B2).withValues(alpha: 0.5),
+                          blurRadius: 30,
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      _cardStep == 'success'
+                          ? LucideIcons.checkCircle
+                          : (_cardStep == 'scanning' ? LucideIcons.refreshCw : LucideIcons.wifi),
+                      color: Colors.white,
+                      size: 42,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 24),
+
+          Text(
+            _cardStep == 'success'
+                ? 'Card Registered & Linked Successfully!'
+                : (_cardStep == 'scanning' ? 'Writing identity to card secure element...' : 'Ready to Tap Card'),
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: _cardStep == 'success' ? const Color(0xFF34D399) : Colors.white,
             ),
           ),
-          const Spacer(flex: 2),
+          const SizedBox(height: 6),
+          Text(
+            'Stores ECDSA P-256 public credential linked to your account.',
+            style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.4)),
+            textAlign: TextAlign.center,
+          ),
+          const Spacer(),
+
+          // Physical card scan button
+          GlassButton(
+            onPressed: _cardStep == 'scanning' ? null : () => _handleCardRegister(simulate: false),
+            child: Text(
+              _cardStep == 'scanning' ? 'Scanning Card...' : 'Scan Physical Tapat Card',
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Colors.white),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Simulation button for testing on PC/emulator
+          GestureDetector(
+            onTap: _cardStep == 'scanning' ? null : () => _handleCardRegister(simulate: true),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
+              ),
+              child: const Center(
+                child: Text(
+                  'Simulate Card Tap (Testing Mode)',
+                  style: TextStyle(color: Color(0xFF38BDF8), fontSize: 13, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
         ],
       ),
     );
@@ -1531,62 +960,20 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFF020B18),
       body: Stack(
         children: [
           _buildBackground(),
           SafeArea(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
-              child: _view == AuthView.welcome
-                  ? _buildWelcomeView()
-                  : _view == AuthView.login
-                      ? _buildLoginView()
-                      : _view == AuthView.signup
-                          ? _buildSignupView()
-                          : _view == AuthView.idVerification
-                              ? _buildIdVerificationView()
-                              : _buildRegisterCardView(),
-            ),
+            child: switch (_view) {
+              AuthView.welcome => _buildWelcomeView(),
+              AuthView.login => _buildLoginView(),
+              AuthView.signup => _buildSignupView(),
+              AuthView.registerCard => _buildRegisterCardView(),
+            },
           ),
         ],
       ),
     );
   }
-}
-
-// ─── Corner Painter ────────────────────────────────────────────────────────
-
-class _CornerPainter extends CustomPainter {
-  final Color color;
-  final double thick;
-  final bool top;
-  final bool left;
-
-  _CornerPainter(
-      {required this.color,
-      required this.thick,
-      required this.top,
-      required this.left});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = thick
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-
-    final x = left ? 0.0 : size.width;
-    final y = top ? 0.0 : size.height;
-    final ex = left ? size.width : 0.0;
-    final ey = top ? size.height : 0.0;
-
-    // Horizontal arm
-    canvas.drawLine(Offset(x, y), Offset(ex, y), paint);
-    // Vertical arm
-    canvas.drawLine(Offset(x, y), Offset(x, ey), paint);
-  }
-
-  @override
-  bool shouldRepaint(_CornerPainter old) => old.color != color;
 }

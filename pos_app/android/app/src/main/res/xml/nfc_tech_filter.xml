@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <!-- Each <tech-list> is an OR condition; tags inside a <tech-list> are ANDed. -->
+    <!-- 1. JCOP4 J3R150 ISO-DEP (ISO 14443-4) smart cards -->
+    <tech-list>
+        <tech>android.nfc.tech.IsoDep</tech>
+    </tech-list>
+    <!-- 2. ISO 14443-3A contactless cards -->
+    <tech-list>
+        <tech>android.nfc.tech.NfcA</tech>
+    </tech-list>
+    <!-- 3. Pre-formatted NDEF tags -->
+    <tech-list>
+        <tech>android.nfc.tech.Ndef</tech>
+    </tech-list>
+    <!-- 4. NDEF-formatable tags -->
+    <tech-list>
+        <tech>android.nfc.tech.NdefFormatable</tech>
+    </tech-list>
+</resources>
+

@@ -8,18 +8,18 @@ import 'screens/main_shell.dart';
 void main() {
   runApp(
     const ProviderScope(
-      child: TapatanApp(),
+      child: BantayApp(),
     ),
   );
 }
 
-class TapatanApp extends StatelessWidget {
-  const TapatanApp({super.key});
+class BantayApp extends StatelessWidget {
+  const BantayApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'tap@tan',
+      title: 'Bantay',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,

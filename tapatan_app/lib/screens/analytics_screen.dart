@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../providers/user_provider.dart';
-import '../utils/lucide_icons.dart';
 import 'package:fl_chart/fl_chart.dart';
+
+import '../utils/lucide_icons.dart';
+import '../providers/user_provider.dart';
+
+// ── Analytics Screen ──────────────────────────────────────────────────────
 
 class AnalyticsScreen extends ConsumerStatefulWidget {
   const AnalyticsScreen({super.key});
@@ -12,730 +15,514 @@ class AnalyticsScreen extends ConsumerStatefulWidget {
 }
 
 class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
-  String _activeTab = 'overview';
-  String? _expandedId;
+  bool _isWeek = true;
+
+  static const _teal = Color(0xFF06B6D4);
+  static const _green = Color(0xFF34D399);
+  static const _amber = Color(0xFFF59E0B);
+
+  static const _weekDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  static const _monthWeeks = ['Wk 1', 'Wk 2', 'Wk 3', 'Wk 4'];
+
+  List<String> get _barLabels => _isWeek ? _weekDays : _monthWeeks;
+
+  List<double> _computeBars(UserState user) {
+    final totalExp = user.totalExpenses;
+    if (_isWeek) {
+      if (totalExp <= 0) return const [0, 0, 0, 0, 0, 0, 0];
+      return [
+        totalExp * 0.10,
+        totalExp * 0.08,
+        totalExp * 0.15,
+        totalExp * 0.12,
+        totalExp * 0.20,
+        totalExp * 0.15,
+        totalExp * 0.20,
+      ];
+    } else {
+      if (totalExp <= 0) return const [0, 0, 0, 0];
+      return [
+        totalExp * 0.20,
+        totalExp * 0.25,
+        totalExp * 0.20,
+        totalExp * 0.35,
+      ];
+    }
+  }
+
+  double _computeNfcSpent(UserState user) => user.transactions
+      .where((t) => t.amount < 0 && t.type == 'nfc')
+      .fold(0.0, (s, t) => s + t.amount.abs());
+
+  double _computeTransferSpent(UserState user) => user.transactions
+      .where((t) => t.amount < 0 && t.type != 'nfc')
+      .fold(0.0, (s, t) => s + t.amount.abs());
+
+  double _computeSarESpent(UserState user) => user.transactions
+      .where((t) =>
+          t.amount < 0 &&
+          (t.name.toLowerCase().contains('sari') ||
+              t.name.toLowerCase().contains('sar-e') ||
+              t.name.toLowerCase().contains('aling nena')))
+      .fold(0.0, (s, t) => s + t.amount.abs());
 
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(userProvider);
-
-    final totalTxns = user.transactions.length;
-    final successTxns = user.transactions.where((t) => t.amount != 0).length;
-    final failedTxns = 0;
-    final avgAuthTime = 0.82;
-    final totalProcessed = user.transactions
-        .where((t) => t.amount < 0)
-        .fold(0.0, (s, t) => s + t.amount.abs());
-    final successRate = totalTxns > 0 ? ((successTxns / totalTxns) * 100).toStringAsFixed(1) : '100.0';
+    final bottomPad = MediaQuery.of(context).padding.bottom;
+    final barData = _computeBars(user);
+    final maxBar = barData.reduce((a, b) => a > b ? a : b);
+    final totalSpent = user.totalExpenses;
+    final totalIncome = user.totalIncome;
+    final nfcSpent = _computeNfcSpent(user);
+    final transferSpent = _computeTransferSpent(user);
+    final sarESpending = _computeSarESpent(user);
 
     return SafeArea(
       bottom: false,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 120),
-        children: [
-          // Header
-          const Text('Analytics', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
-          Text('Tap performance & security metrics', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12)),
-          const SizedBox(height: 20),
-
-          // Tab switcher
-          Container(
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.04),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white.withOpacity(0.08)),
-            ),
-            child: Row(
-              children: [
-                _buildTab('overview', 'Overview', LucideIcons.activity),
-                _buildTab('benchmark', 'Benchmark', LucideIcons.barChart2),
-                _buildTab('health', 'Card Health', LucideIcons.creditCard),
-              ],
+      child: CustomScrollView(
+        physics: const BouncingScrollPhysics(),
+        slivers: [
+          // ── Header ─────────────────────────────────────────────────
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Analytics', style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold)),
+                  // Period selector
+                  Container(
+                    padding: const EdgeInsets.all(3),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.06),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white.withOpacity(0.10)),
+                    ),
+                    child: Row(
+                      children: [
+                        _PeriodButton(label: 'Week', active: _isWeek, onTap: () => setState(() => _isWeek = true)),
+                        _PeriodButton(label: 'Month', active: !_isWeek, onTap: () => setState(() => _isWeek = false)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 20),
 
-          // Content
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 300),
-            child: _activeTab == 'overview'
-                ? _buildOverviewTab(user, totalTxns, successTxns, failedTxns, avgAuthTime, totalProcessed, successRate)
-                : _activeTab == 'benchmark'
-                    ? _buildBenchmarkTab()
-                    : _buildHealthTab(user),
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(24, 24, 24, bottomPad + 100),
+            sliver: SliverList(
+              delegate: SliverChildListDelegate([
+
+                // ── Available Money Sync Banner ───────────────────────
+                _GlassCard(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Available Money (${user.name.isNotEmpty ? user.name : "Account"})',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.55),
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '₱${user.balance.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              color: Color(0xFF38BDF8),
+                              fontSize: 24,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: _green.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: _green.withOpacity(0.35)),
+                        ),
+                        child: const Text(
+                          'Synced',
+                          style: TextStyle(
+                            color: _green,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                // ── Summary row ───────────────────────────────────────
+                Row(
+                  children: [
+                    Expanded(
+                      child: _SummaryCard(
+                        label: _isWeek ? 'Total Spent' : 'Monthly Spent',
+                        value: '₱${totalSpent.toStringAsFixed(2)}',
+                        icon: LucideIcons.arrowUpRight,
+                        color: const Color(0xFFF87171),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _SummaryCard(
+                        label: _isWeek ? 'Total Income' : 'Monthly Income',
+                        value: '₱${totalIncome.toStringAsFixed(2)}',
+                        icon: LucideIcons.arrowDownLeft,
+                        color: _green,
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 20),
+
+                // ── Bar chart ─────────────────────────────────────────
+                _GlassCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Spending Overview', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 4),
+                      Text(
+                        _isWeek ? 'Day-by-day breakdown' : 'Week-by-week breakdown',
+                        style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12),
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        height: 160,
+                        child: BarChart(
+                          BarChartData(
+                            alignment: BarChartAlignment.spaceAround,
+                            maxY: maxBar > 0 ? maxBar * 1.3 : 100.0,
+                            gridData: FlGridData(
+                              show: true,
+                              drawVerticalLine: false,
+                              getDrawingHorizontalLine: (_) => FlLine(
+                                color: Colors.white.withOpacity(0.06),
+                                strokeWidth: 1,
+                              ),
+                            ),
+                            borderData: FlBorderData(show: false),
+                            titlesData: FlTitlesData(
+                              leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                              rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                              topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                              bottomTitles: AxisTitles(
+                                sideTitles: SideTitles(
+                                  showTitles: true,
+                                  getTitlesWidget: (value, meta) {
+                                    final i = value.toInt();
+                                    if (i < 0 || i >= _barLabels.length) return const SizedBox.shrink();
+                                    return Text(
+                                      _barLabels[i],
+                                      style: TextStyle(color: Colors.white.withOpacity(0.45), fontSize: 10),
+                                    );
+                                  },
+                                  reservedSize: 24,
+                                ),
+                              ),
+                            ),
+                            barGroups: List.generate(barData.length, (i) {
+                              return BarChartGroupData(
+                                x: i,
+                                barRods: [
+                                  BarChartRodData(
+                                    toY: barData[i],
+                                    gradient: const LinearGradient(
+                                      colors: [Color(0xFF0369A1), Color(0xFF06B6D4)],
+                                      begin: Alignment.bottomCenter,
+                                      end: Alignment.topCenter,
+                                    ),
+                                    width: _isWeek ? 22 : 40,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                ],
+                              );
+                            }),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                // ── Breakdown by category ─────────────────────────────
+                _GlassCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('By Category', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 16),
+                      _CategoryRow(
+                        icon: LucideIcons.wifi,
+                        label: 'NFC Pay',
+                        amount: nfcSpent,
+                        color: _teal,
+                        total: totalSpent,
+                      ),
+                      const SizedBox(height: 12),
+                      _CategoryRow(
+                        icon: LucideIcons.arrowUpRight,
+                        label: 'Transfers',
+                        amount: transferSpent,
+                        color: const Color(0xFF8B5CF6),
+                        total: totalSpent,
+                      ),
+                      const SizedBox(height: 12),
+                      _CategoryRow(
+                        icon: LucideIcons.store,
+                        label: 'Sar-E Purchases',
+                        amount: sarESpending,
+                        color: _amber,
+                        total: totalSpent,
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                // ── Sar-E spending section ────────────────────────────
+                _GlassCard(
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 48, height: 48,
+                        decoration: BoxDecoration(
+                          color: _amber.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: _amber.withOpacity(0.3)),
+                        ),
+                        child: Icon(LucideIcons.store, color: _amber, size: 24),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Sar-E Purchases', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                            Text(
+                              _isWeek ? 'This week' : 'This month',
+                              style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Text(
+                        '₱${sarESpending.toStringAsFixed(2)}',
+                        style: TextStyle(color: _amber, fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                // ── NFC pay count ─────────────────────────────────────
+                _GlassCard(
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 48, height: 48,
+                        decoration: BoxDecoration(
+                          color: _teal.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: _teal.withOpacity(0.3)),
+                        ),
+                        child: Icon(LucideIcons.nfc, color: _teal, size: 24),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('NFC Transactions', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                            Text('${user.nfcPayCount} taps total', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      Text(
+                        '${user.nfcPayCount}',
+                        style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 28, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
+              ]),
+            ),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildTab(String id, String label, IconData icon) {
-    final isActive = _activeTab == id;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => _activeTab = id),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: isActive ? const Color(0xFF0369A1).withOpacity(0.35) : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: isActive ? const Color(0xFF0891B2).withOpacity(0.4) : Colors.transparent),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 13, color: isActive ? const Color(0xFF38BDF8) : Colors.white.withOpacity(0.35)),
-              const SizedBox(width: 4),
-              Text(label, style: TextStyle(color: isActive ? const Color(0xFF38BDF8) : Colors.white.withOpacity(0.35), fontSize: 11, fontWeight: isActive ? FontWeight.w700 : FontWeight.w500)),
-            ],
+// ── Period Button ─────────────────────────────────────────────────────────
+
+class _PeriodButton extends StatelessWidget {
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _PeriodButton({required this.label, required this.active, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          gradient: active
+              ? const LinearGradient(colors: [Color(0xFF0369A1), Color(0xFF0891B2)])
+              : null,
+          borderRadius: BorderRadius.circular(9),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: active ? Colors.white : Colors.white38,
+            fontSize: 12,
+            fontWeight: active ? FontWeight.w700 : FontWeight.w500,
           ),
         ),
       ),
     );
   }
+}
 
-  Widget _buildOverviewTab(UserState user, int totalTxns, int successTxns, int failedTxns, double avgAuthTime, double totalProcessed, String successRate) {
-    final recentLogs = user.transactions.take(6).toList();
+// ── Summary Card ──────────────────────────────────────────────────────────
 
-    return Column(
-      key: const ValueKey('overview'),
-      children: [
-        // Stats 2x2 grid
-        Row(
-          children: [
-            _buildStatBox('Total Transactions', totalTxns.toString(), 'Last 30 days', LucideIcons.activity, const Color(0xFF0369A1)),
-            const SizedBox(width: 12),
-            _buildStatBox('Success Rate', '$successRate%', '$successTxns of $totalTxns', LucideIcons.trendingUp, const Color(0xFF10B981)),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            _buildStatBox('Avg NFC Auth', '${avgAuthTime}s', 'Card tap speed', LucideIcons.zap, const Color(0xFFF59E0B)),
-            const SizedBox(width: 12),
-            _buildStatBox('Total Processed', '₱${totalProcessed >= 1000 ? "${(totalProcessed / 1000).toStringAsFixed(1)}K" : totalProcessed.toStringAsFixed(0)}', 'Tokenized payments', LucideIcons.shield, const Color(0xFF06B6D4)),
-          ],
-        ),
-        const SizedBox(height: 20),
+class _SummaryCard extends StatelessWidget {
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color color;
 
-        // Transaction bar chart
-        _buildGlassPanel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Daily Transactions', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800)),
-                      Text('Last 7 days · success vs failed', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11)),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xFF0891B2))),
-                      const SizedBox(width: 4),
-                      Text('OK', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10)),
-                      const SizedBox(width: 8),
-                      Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xFFEF4444))),
-                      const SizedBox(width: 4),
-                      Text('Fail', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10)),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                height: 120,
-                child: BarChart(
-                  BarChartData(
-                    gridData: const FlGridData(show: false),
-                    titlesData: FlTitlesData(
-                      show: true,
-                      leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                      rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                      topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                      bottomTitles: AxisTitles(
-                        sideTitles: SideTitles(
-                          showTitles: true,
-                          getTitlesWidget: (val, _) {
-                            const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-                            final idx = val.toInt();
-                            if (idx >= 0 && idx < days.length) {
-                              return Padding(
-                                padding: const EdgeInsets.only(top: 8),
-                                child: Text(days[idx], style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 10)),
-                              );
-                            }
-                            return const SizedBox();
-                          },
-                        ),
-                      ),
-                    ),
-                    borderData: FlBorderData(show: false),
-                    barGroups: [
-                      BarChartGroupData(x: 0, barRods: [BarChartRodData(toY: 5, color: const Color(0xFF10B981), width: 6, borderRadius: const BorderRadius.vertical(top: Radius.circular(3))), BarChartRodData(toY: 0, color: const Color(0xFFEF4444), width: 6, borderRadius: const BorderRadius.vertical(top: Radius.circular(3)))]),
-                      BarChartGroupData(x: 1, barRods: [BarChartRodData(toY: 8, color: const Color(0xFF10B981), width: 6, borderRadius: const BorderRadius.vertical(top: Radius.circular(3))), BarChartRodData(toY: 1, color: const Color(0xFFEF4444), width: 6, borderRadius: const BorderRadius.vertical(top: Radius.circular(3)))]),
-                      BarChartGroupData(x: 2, barRods: [BarChartRodData(toY: 6, color: const Color(0xFF10B981), width: 6, borderRadius: const BorderRadius.vertical(top: Radius.circular(3))), BarChartRodData(toY: 0, color: const Color(0xFFEF4444), width: 6, borderRadius: const BorderRadius.vertical(top: Radius.circular(3)))]),
-                      BarChartGroupData(x: 3, barRods: [BarChartRodData(toY: 9, color: const Color(0xFF10B981), width: 6, borderRadius: const BorderRadius.vertical(top: Radius.circular(3))), BarChartRodData(toY: 1, color: const Color(0xFFEF4444), width: 6, borderRadius: const BorderRadius.vertical(top: Radius.circular(3)))]),
-                      BarChartGroupData(x: 4, barRods: [BarChartRodData(toY: 7, color: const Color(0xFF10B981), width: 6, borderRadius: const BorderRadius.vertical(top: Radius.circular(3))), BarChartRodData(toY: 1, color: const Color(0xFFEF4444), width: 6, borderRadius: const BorderRadius.vertical(top: Radius.circular(3)))]),
-                      BarChartGroupData(x: 5, barRods: [BarChartRodData(toY: 5, color: const Color(0xFF10B981), width: 6, borderRadius: const BorderRadius.vertical(top: Radius.circular(3))), BarChartRodData(toY: 0, color: const Color(0xFFEF4444), width: 6, borderRadius: const BorderRadius.vertical(top: Radius.circular(3)))]),
-                      BarChartGroupData(x: 6, barRods: [BarChartRodData(toY: (4 + user.transactions.length).toDouble(), color: const Color(0xFF10B981), width: 6, borderRadius: const BorderRadius.vertical(top: Radius.circular(3))), BarChartRodData(toY: failedTxns.toDouble(), color: const Color(0xFFEF4444), width: 6, borderRadius: const BorderRadius.vertical(top: Radius.circular(3)))]),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
+  const _SummaryCard({required this.label, required this.value, required this.icon, required this.color});
 
-        // NFC Auth Speed
-        _buildGlassPanel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('NFC Auth Speed Distribution', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800)),
-              Text('Time from tap to authentication', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11)),
-              const SizedBox(height: 16),
-              ...[
-                ['<0.5s', 12, const Color(0xFF10B981)],
-                ['0.5–1s', 21, const Color(0xFF10B981)],
-                ['1–1.5s', 10, const Color(0xFFF59E0B)],
-                ['1.5–2s', 4, const Color(0xFFEF4444)],
-                ['>2s', 1, const Color(0xFFEF4444)],
-              ].map((e) {
-                final label = e[0] as String;
-                final count = e[1] as int;
-                final color = e[2] as Color;
-                final pct = count / 48;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Row(
-                    children: [
-                      SizedBox(width: 48, child: Text(label, style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11))),
-                      Expanded(
-                        child: Container(
-                          height: 6,
-                          decoration: BoxDecoration(borderRadius: BorderRadius.circular(3), color: Colors.white.withOpacity(0.08)),
-                          child: FractionallySizedBox(
-                            alignment: Alignment.centerLeft,
-                            widthFactor: pct,
-                            child: Container(
-                              decoration: BoxDecoration(borderRadius: BorderRadius.circular(3), color: color),
-                            ),
-                          ),
-                        ),
-                      ),
-                      SizedBox(width: 24, child: Text('$count', textAlign: TextAlign.right, style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11))),
-                    ],
-                  ),
-                );
-              }),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        // Security metrics
-        Row(
-          children: [
-            _buildMiniStat('Failed Auths', '$failedTxns', const Color(0xFFEF4444), LucideIcons.xCircle),
-            const SizedBox(width: 8),
-            _buildMiniStat('NFC Pays', '${user.nfcPayCount}', const Color(0xFF38BDF8), LucideIcons.wifi),
-            const SizedBox(width: 8),
-            _buildMiniStat('Avg Tx Time', '1.3s', const Color(0xFF06B6D4), LucideIcons.timer),
-          ],
-        ),
-        const SizedBox(height: 16),
-
-        // Recent auth log
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Recent Auth Log', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800)),
-                Text('${recentLogs.length} entries', style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 11)),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (recentLogs.isEmpty)
-              Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.04),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.white.withOpacity(0.07)),
-                ),
-                child: Center(
-                  child: Text('No transactions yet', style: TextStyle(color: Colors.white.withOpacity(0.4))),
-                ),
-              )
-            else
-              ...recentLogs.map((tx) {
-                final isExpanded = _expandedId == tx.id;
-                final isSuccess = tx.amount != 0;
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.04),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: !isSuccess ? const Color(0xFFEF4444).withOpacity(0.2) : Colors.white.withOpacity(0.07)),
-                  ),
-                  child: GestureDetector(
-                    onTap: () => setState(() => _expandedId = isExpanded ? null : tx.id),
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            Container(
-                              width: 32, height: 32,
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(10),
-                                color: isSuccess ? const Color(0xFF10B981).withOpacity(0.15) : const Color(0xFFEF4444).withOpacity(0.15),
-                              ),
-                              child: Icon(isSuccess ? LucideIcons.checkCircle : LucideIcons.xCircle, size: 15, color: isSuccess ? const Color(0xFF34D399) : const Color(0xFFF87171)),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text('${tx.type == 'nfc' ? 'NFC Pay' : tx.type == 'send' ? 'Send' : 'Receive'} → ${tx.name}', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
-                                  Text('₱${tx.amount.abs().toStringAsFixed(2)} · ${tx.time}', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11)),
-                                ],
-                              ),
-                            ),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Text('1.3s', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: isSuccess ? const Color(0xFF34D399) : const Color(0xFFF87171))),
-                                Icon(isExpanded ? LucideIcons.chevronUp : LucideIcons.chevronDown, size: 12, color: Colors.white.withOpacity(0.3)),
-                              ],
-                            ),
-                          ],
-                        ),
-                        if (isExpanded) ...[
-                          const SizedBox(height: 12),
-                          Divider(color: Colors.white.withOpacity(0.07)),
-                          const SizedBox(height: 8),
-                          _buildLogDetail('Transaction ID', tx.id),
-                          _buildLogDetail('NFC Auth Time', '0.82s'),
-                          _buildLogDetail('Total Time', '1.3s'),
-                          _buildLogDetail('Status', isSuccess ? 'Completed' : 'Failed'),
-                        ],
-                      ],
-                    ),
-                  ),
-                );
-              }),
-          ],
-        ),
-        const SizedBox(height: 16),
-
-        // Security assessment
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0x1410B981), Color(0x0F06B6D4)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: const Color(0xFF10B981).withOpacity(0.2)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(LucideIcons.shield, size: 16, color: Color(0xFF34D399)),
-                  const SizedBox(width: 8),
-                  const Text('Security Assessment', style: TextStyle(color: Color(0xFF34D399), fontSize: 13, fontWeight: FontWeight.w800)),
-                ],
-              ),
-              const SizedBox(height: 12),
-              _buildAssessmentRow('Auth Reliability', '$successRate%', const Color(0xFF34D399)),
-              _buildAssessmentRow('Avg NFC Response', '0.82s', const Color(0xFF38BDF8)),
-              _buildAssessmentRow('Token Integrity', '100%', const Color(0xFF34D399)),
-              _buildAssessmentRow('Failed Auth Rate', '0.0%', const Color(0xFFF59E0B)),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBenchmarkTab() {
-    final benchmarkData = [
-      {'method': 'NFC Card', 'avgMs': 820.0, 'p95Ms': 1400.0, 'failRate': 6.4, 'security': 95},
-      {'method': 'SMS OTP', 'avgMs': 4200.0, 'p95Ms': 12000.0, 'failRate': 18.2, 'security': 55},
-      {'method': 'Biometric', 'avgMs': 950.0, 'p95Ms': 1800.0, 'failRate': 8.1, 'security': 82},
-    ];
-    final colors = [const Color(0xFF0891B2), const Color(0xFFF59E0B), const Color(0xFF06B6D4)];
-
-    return Column(
-      key: const ValueKey('benchmark'),
-      children: [
-        _buildGlassPanel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(LucideIcons.cpu, size: 14, color: const Color(0xFF38BDF8)),
-                  const SizedBox(width: 8),
-                  const Text('Authentication Method Comparison', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800)),
-                ],
-              ),
-              Text('Side-by-side timing: NFC Card vs SMS OTP vs Biometric. Lower is better.', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11)),
-              const SizedBox(height: 16),
-              SizedBox(
-                height: 160,
-                child: BarChart(
-                  BarChartData(
-                    gridData: const FlGridData(show: false),
-                    titlesData: FlTitlesData(
-                      show: true,
-                      leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                      rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                      topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                      bottomTitles: AxisTitles(
-                        sideTitles: SideTitles(
-                          showTitles: true,
-                          reservedSize: 28,
-                          getTitlesWidget: (val, _) {
-                            final labels = ['NFC Card', 'SMS OTP', 'Biometric'];
-                            final idx = val.toInt();
-                            if (idx >= 0 && idx < labels.length) {
-                              return Padding(padding: const EdgeInsets.only(top: 8), child: Text(labels[idx], style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 9)));
-                            }
-                            return const SizedBox();
-                          },
-                        ),
-                      ),
-                    ),
-                    borderData: FlBorderData(show: false),
-                    barGroups: List.generate(3, (i) => BarChartGroupData(
-                      x: i,
-                      barRods: [
-                        BarChartRodData(toY: (benchmarkData[i]['avgMs'] as double) / 100, color: colors[i], width: 14, borderRadius: const BorderRadius.vertical(top: Radius.circular(4))),
-                        BarChartRodData(toY: (benchmarkData[i]['p95Ms'] as double) / 100, color: colors[i].withOpacity(0.4), width: 14, borderRadius: const BorderRadius.vertical(top: Radius.circular(4))),
-                      ],
-                    )),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        // Comparison table
-        _buildGlassPanel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Detailed Comparison', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 12),
-              Row(
-                children: ['Method', 'Avg', 'Fail %', 'Security'].map((h) => Expanded(
-                  child: Text(h, style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 10, fontWeight: FontWeight.w700)),
-                )).toList(),
-              ),
-              Divider(color: Colors.white.withOpacity(0.08), height: 16),
-              ...List.generate(3, (i) {
-                final d = benchmarkData[i];
-                final failRate = d['failRate'] as double;
-                final security = d['security'] as int;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Row(
-                    children: [
-                      Expanded(child: Text(d['method'] as String, style: TextStyle(color: colors[i], fontSize: 11, fontWeight: FontWeight.w700))),
-                      Expanded(child: Text('${d['avgMs']}ms', style: TextStyle(color: colors[i], fontSize: 11, fontWeight: FontWeight.w700))),
-                      Expanded(child: Text('$failRate%', style: TextStyle(color: failRate > 10 ? const Color(0xFFF87171) : const Color(0xFF34D399), fontSize: 11, fontWeight: FontWeight.w700))),
-                      Expanded(child: Text('$security/100', style: TextStyle(color: security >= 90 ? const Color(0xFF34D399) : security >= 70 ? const Color(0xFFF59E0B) : const Color(0xFFF87171), fontSize: 11, fontWeight: FontWeight.w700))),
-                    ],
-                  ),
-                );
-              }),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        // Research finding
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [Color(0x1F0891B2), Color(0x1406B6D4)]),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: const Color(0xFF06B6D4).withOpacity(0.25)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('📊 Research Finding', style: TextStyle(color: Color(0xFF38BDF8), fontSize: 13, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 8),
-              RichText(
-                text: TextSpan(
-                  style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12, height: 1.6),
-                  children: const [
-                    TextSpan(text: 'NFC Card authentication is '),
-                    TextSpan(text: '5.1× faster', style: TextStyle(color: Color(0xFFD4BCFC), fontWeight: FontWeight.w700)),
-                    TextSpan(text: ' than SMS OTP on average and achieves a '),
-                    TextSpan(text: '93.6% success rate', style: TextStyle(color: Color(0xFF6EE7B7), fontWeight: FontWeight.w700)),
-                    TextSpan(text: ' vs 81.8% for SMS OTP — while offering significantly stronger security due to physical possession requirements.'),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildHealthTab(UserState user) {
-    return Column(
-      key: const ValueKey('health'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Real-time card health data from your registered NFC cards.', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12)),
-        const SizedBox(height: 12),
-        ...user.virtualCards.map((card) {
-          final useCount = user.transactions.where((t) => t.type == 'nfc').length;
-          final memPct = (useCount * 12 + 24).clamp(0, 100);
-
-          return Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.04),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: Colors.white.withOpacity(0.08)),
-            ),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 32, height: 32,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(10),
-                            gradient: LinearGradient(colors: [card.colors[0].withOpacity(0.4), card.colors[1].withOpacity(0.3)]),
-                          ),
-                          child: Icon(LucideIcons.creditCard, size: 15, color: card.colors[0]),
-                        ),
-                        const SizedBox(width: 10),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(card.provider, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
-                            Text(card.id, style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 10, fontFamily: 'monospace')),
-                          ],
-                        ),
-                      ],
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(20),
-                        color: const Color(0xFF10B981).withOpacity(0.15),
-                        border: Border.all(color: const Color(0xFF10B981).withOpacity(0.35)),
-                      ),
-                      child: const Text('Active', style: TextStyle(color: Color(0xFF34D399), fontSize: 10, fontWeight: FontWeight.w700)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                GridView.count(
-                  shrinkWrap: true,
-                  crossAxisCount: 2,
-                  mainAxisSpacing: 8,
-                  crossAxisSpacing: 8,
-                  childAspectRatio: 3.5,
-                  physics: const NeverScrollableScrollPhysics(),
-                  children: [
-                    _buildHealthCell('Times Used', '$useCount'),
-                    _buildHealthCell('Last Tapped', useCount > 0 ? 'Recently' : 'Never'),
-                    _buildHealthCell('Applet Version', 'v2.1.0'),
-                    _buildHealthCell('Memory Used', '$memPct%'),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                // Memory bar
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Memory Usage', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 10)),
-                        Text('$memPct%', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 10, fontWeight: FontWeight.w700)),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Container(
-                      height: 4,
-                      decoration: BoxDecoration(borderRadius: BorderRadius.circular(2), color: Colors.white.withOpacity(0.08)),
-                      child: FractionallySizedBox(
-                        alignment: Alignment.centerLeft,
-                        widthFactor: memPct / 100,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(2),
-                            color: memPct < 50 ? const Color(0xFF34D399) : memPct < 80 ? const Color(0xFFF59E0B) : const Color(0xFFEF4444),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          );
-        }),
-        if (user.virtualCards.isEmpty)
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.04),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: Colors.white.withOpacity(0.08)),
-            ),
-            child: Center(
-              child: Text('No cards registered', style: TextStyle(color: Colors.white.withOpacity(0.4))),
-            ),
-          ),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF59E0B).withOpacity(0.08),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFF59E0B).withOpacity(0.2)),
-          ),
-          child: Text('⚡ Memory usage is estimated based on tap count. Actual Java Card memory varies by applet version.', style: TextStyle(color: const Color(0xFFFBBF24).withOpacity(0.8), fontSize: 11)),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildGlassPanel({required Widget child}) {
+  @override
+  Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF0369A1).withOpacity(0.18),
+            const Color(0xFF0891B2).withOpacity(0.08),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF0891B2).withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(height: 10),
+          Text(value, style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 2),
+          Text(label, style: TextStyle(color: Colors.white.withOpacity(0.45), fontSize: 11)),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Glass Card ────────────────────────────────────────────────────────────
+
+class _GlassCard extends StatelessWidget {
+  final Widget child;
+
+  const _GlassCard({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF0369A1).withOpacity(0.18),
+            const Color(0xFF0891B2).withOpacity(0.10),
+            const Color(0xFF06B6D4).withOpacity(0.06),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFF0891B2).withOpacity(0.22)),
+        boxShadow: [
+          BoxShadow(color: const Color(0xFF0369A1).withOpacity(0.15), blurRadius: 24, offset: const Offset(0, 6)),
+        ],
       ),
       child: child,
     );
   }
+}
 
-  Widget _buildStatBox(String label, String value, String sub, IconData icon, Color color) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(colors: [color.withOpacity(0.13), color.withOpacity(0.05)]),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: color.withOpacity(0.2)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+// ── Category Row ──────────────────────────────────────────────────────────
+
+class _CategoryRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final double amount;
+  final Color color;
+  final double total;
+
+  const _CategoryRow({
+    required this.icon,
+    required this.label,
+    required this.amount,
+    required this.color,
+    required this.total,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = total > 0 ? (amount / total).clamp(0.0, 1.0) : 0.0;
+    return Column(
+      children: [
+        Row(
           children: [
-            Container(
-              width: 32, height: 32,
-              decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), color: color.withOpacity(0.2)),
-              child: Icon(icon, color: color, size: 16),
+            Icon(icon, color: color, size: 16),
+            const SizedBox(width: 8),
+            Expanded(child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 13))),
+            Text(
+              '₱${amount.toStringAsFixed(0)}',
+              style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w700),
             ),
-            const SizedBox(height: 10),
-            Text(value, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800, letterSpacing: -0.5)),
-            const SizedBox(height: 2),
-            Text(label, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
-            Text(sub, style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 10)),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildMiniStat(String label, String value, Color color, IconData icon) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.04),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withOpacity(0.08)),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: pct,
+            backgroundColor: Colors.white.withOpacity(0.06),
+            valueColor: AlwaysStoppedAnimation<Color>(color),
+            minHeight: 5,
+          ),
         ),
-        child: Column(
-          children: [
-            Icon(icon, size: 16, color: color),
-            const SizedBox(height: 4),
-            Text(value, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900)),
-            Text(label, textAlign: TextAlign.center, style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 9, fontWeight: FontWeight.w600)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLogDetail(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11)),
-          Text(value, style: const TextStyle(color: Color(0xFF7DD3FC), fontSize: 11, fontWeight: FontWeight.w600, fontFamily: 'monospace')),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAssessmentRow(String label, String value, Color color) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12)),
-          Text(value, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w800)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHealthCell(String label, String value) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withOpacity(0.06)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(label, style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 9)),
-          Text(value, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
-        ],
-      ),
+      ],
     );
   }
 }
