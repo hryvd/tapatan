@@ -5,7 +5,8 @@ import '../utils/lucide_icons.dart';
 import '../services/nfc_service.dart';
 
 // ── NFC Unlock Screen ─────────────────────────────────────────────────────
-// Clean NFC tap screen for arming the Tapat Card.
+// Clean NFC tap screen for arming the Tapat Card with single-shot action
+// locking and automatic 5-second rescan timer on failure.
 
 class NfcUnlockScreen extends StatefulWidget {
   final String userName;
@@ -37,6 +38,10 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
   bool _isScanning = false;
   bool _isSuccess = false;
   bool _isError = false;
+  bool _actionCompleted = false;
+  int _retrySecondsLeft = 0;
+  Timer? _retryTimer;
+
   String _statusText = 'Hold your Tapat Card to the back of your phone';
   String _errorMsg = '';
 
@@ -58,13 +63,19 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
     )..repeat();
 
     _pulse1 = Tween<double>(begin: 0.85, end: 1.15).animate(
-      CurvedAnimation(parent: _pulseController, curve: const Interval(0.0, 1.0, curve: Curves.easeInOut)),
+      CurvedAnimation(
+          parent: _pulseController,
+          curve: const Interval(0.0, 1.0, curve: Curves.easeInOut)),
     );
     _pulse2 = Tween<double>(begin: 0.80, end: 1.20).animate(
-      CurvedAnimation(parent: _pulseController, curve: const Interval(0.1, 0.9, curve: Curves.easeInOut)),
+      CurvedAnimation(
+          parent: _pulseController,
+          curve: const Interval(0.1, 0.9, curve: Curves.easeInOut)),
     );
     _pulse3 = Tween<double>(begin: 0.75, end: 1.25).animate(
-      CurvedAnimation(parent: _pulseController, curve: const Interval(0.2, 0.8, curve: Curves.easeInOut)),
+      CurvedAnimation(
+          parent: _pulseController,
+          curve: const Interval(0.2, 0.8, curve: Curves.easeInOut)),
     );
     _rippleAnim = Tween<double>(begin: 0.5, end: 1.8).animate(
       CurvedAnimation(parent: _rippleController, curve: Curves.easeOut),
@@ -76,25 +87,48 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
 
   @override
   void dispose() {
+    _retryTimer?.cancel();
+    NfcService.stopSession();
     _pulseController.dispose();
     _rippleController.dispose();
     super.dispose();
   }
 
+  void _start5SecRetryTimer() {
+    _retryTimer?.cancel();
+    if (!mounted || _actionCompleted || _isSuccess) return;
+    setState(() => _retrySecondsLeft = 5);
+    _retryTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || _actionCompleted || _isSuccess) {
+        timer.cancel();
+        return;
+      }
+      if (_retrySecondsLeft <= 1) {
+        timer.cancel();
+        setState(() => _retrySecondsLeft = 0);
+        _startScan();
+      } else {
+        setState(() => _retrySecondsLeft--);
+      }
+    });
+  }
+
   Future<void> _startScan() async {
-    if (_isScanning) return;
+    // Single-action guard: ignore duplicate scans if already scanning or unlocked
+    if (_isScanning || _actionCompleted || _isSuccess) return;
+    _retryTimer?.cancel();
     setState(() {
       _isScanning = true;
       _isSuccess = false;
       _isError = false;
+      _retrySecondsLeft = 0;
       _statusText = 'Scanning… Hold Tapat Card near phone';
       _errorMsg = '';
     });
 
-    // Attempt to read card identity from NFC
     final result = await NfcService.readCardIdentity();
 
-    if (!mounted) return;
+    if (!mounted || _actionCompleted) return;
 
     if (result['success'] == true) {
       final tappedCardId = (result['cardId'] as String?) ?? '';
@@ -109,15 +143,18 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
           _errorMsg =
               'Card Mismatch: Tapped card ($tappedCardId) is not bound to ${widget.userName} (${widget.cardId}).';
         });
+        _start5SecRetryTimer();
         return;
       }
 
+      // Lock single action so a second tap never triggers another action
+      _actionCompleted = true;
       setState(() {
         _isScanning = false;
         _isSuccess = true;
         _statusText = 'Tapat JCOP4 Card verified via Turing Composition!';
       });
-      await Future.delayed(const Duration(milliseconds: 600));
+      await Future.delayed(const Duration(milliseconds: 500));
       if (mounted) widget.onUnlocked();
     } else {
       setState(() {
@@ -128,10 +165,15 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
             : 'Scan failed';
         _errorMsg = result['error'] as String? ?? 'Could not read card.';
       });
+      _start5SecRetryTimer();
     }
   }
 
   Future<void> _forceUnlockWithProvisionedCard() async {
+    if (_actionCompleted) return;
+    _actionCompleted = true;
+    _retryTimer?.cancel();
+    await NfcService.stopSession();
     setState(() {
       _isScanning = false;
       _isError = false;
@@ -139,7 +181,7 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
       _statusText = 'Tapat JCOP4 Card verified!';
       _errorMsg = '';
     });
-    await Future.delayed(const Duration(milliseconds: 500));
+    await Future.delayed(const Duration(milliseconds: 450));
     if (mounted) widget.onUnlocked();
   }
 
@@ -158,13 +200,16 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                   GestureDetector(
                     onTap: widget.onBack,
                     child: Container(
-                      width: 40, height: 40,
+                      width: 40,
+                      height: 40,
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.06),
+                        color: Colors.white.withValues(alpha: 0.06),
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.white.withOpacity(0.12)),
+                        border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.12)),
                       ),
-                      child: const Icon(LucideIcons.arrowLeft, color: Colors.white54, size: 18),
+                      child: const Icon(LucideIcons.arrowLeft,
+                          color: Colors.white54, size: 18),
                     ),
                   ),
                   const SizedBox(width: 16),
@@ -173,7 +218,10 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                     children: [
                       Text(
                         'Arm Tapat Card',
-                        style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold),
                       ),
                       Text(
                         'NFC Authentication',
@@ -203,8 +251,9 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color: _teal.withOpacity(
-                                ((1 - (_rippleAnim.value - 0.5) / 1.3).clamp(0.0, 0.35)),
+                              color: _teal.withValues(
+                                alpha: ((1 - (_rippleAnim.value - 0.5) / 1.3)
+                                    .clamp(0.0, 0.35)),
                               ),
                               width: 1.5,
                             ),
@@ -224,7 +273,7 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               border: Border.all(
-                                color: _teal.withOpacity(0.08),
+                                color: _teal.withValues(alpha: 0.08),
                                 width: 2,
                               ),
                             ),
@@ -243,9 +292,9 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                             height: 160,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: _teal.withOpacity(0.05),
+                              color: _teal.withValues(alpha: 0.05),
                               border: Border.all(
-                                color: _teal.withOpacity(0.18),
+                                color: _teal.withValues(alpha: 0.18),
                                 width: 1.5,
                               ),
                             ),
@@ -264,16 +313,18 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             color: _isSuccess
-                                ? _green.withOpacity(0.12)
+                                ? _green.withValues(alpha: 0.12)
                                 : _isError
-                                    ? const Color(0xFFEF4444).withOpacity(0.12)
-                                    : _teal.withOpacity(0.10),
+                                    ? const Color(0xFFEF4444)
+                                        .withValues(alpha: 0.12)
+                                    : _teal.withValues(alpha: 0.10),
                             border: Border.all(
                               color: _isSuccess
-                                  ? _green.withOpacity(0.4)
+                                  ? _green.withValues(alpha: 0.4)
                                   : _isError
-                                      ? const Color(0xFFEF4444).withOpacity(0.4)
-                                      : _teal.withOpacity(0.35),
+                                      ? const Color(0xFFEF4444)
+                                          .withValues(alpha: 0.4)
+                                      : _teal.withValues(alpha: 0.35),
                               width: 1.5,
                             ),
                           ),
@@ -289,10 +340,19 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                         borderRadius: BorderRadius.circular(20),
                         gradient: LinearGradient(
                           colors: _isSuccess
-                              ? [const Color(0xFF065F46), const Color(0xFF047857)]
+                              ? [
+                                  const Color(0xFF065F46),
+                                  const Color(0xFF047857)
+                                ]
                               : _isError
-                                  ? [const Color(0xFF7F1D1D), const Color(0xFF991B1B)]
-                                  : [const Color(0xFF0369A1), const Color(0xFF0891B2)],
+                                  ? [
+                                      const Color(0xFF7F1D1D),
+                                      const Color(0xFF991B1B)
+                                    ]
+                                  : [
+                                      const Color(0xFF0369A1),
+                                      const Color(0xFF0891B2)
+                                    ],
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         ),
@@ -332,7 +392,21 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                 const SizedBox(height: 8),
                 Text(
                   _errorMsg,
-                  style: const TextStyle(color: Color(0xFFF87171), fontSize: 13),
+                  style:
+                      const TextStyle(color: Color(0xFFF87171), fontSize: 13),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+
+              if (_retrySecondsLeft > 0) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Re-scanning automatically in ${_retrySecondsLeft}s...',
+                  style: const TextStyle(
+                    color: _teal,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
                   textAlign: TextAlign.center,
                 ),
               ],
@@ -341,7 +415,9 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                 const SizedBox(height: 8),
                 Text(
                   'Hold your Tapat Card to the back of your phone',
-                  style: TextStyle(color: Colors.white.withOpacity(0.45), fontSize: 13),
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.45),
+                      fontSize: 13),
                   textAlign: TextAlign.center,
                 ),
               ],
@@ -369,16 +445,25 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     decoration: BoxDecoration(
-                      color: _teal.withOpacity(0.12),
+                      color: _teal.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: _teal.withOpacity(0.35)),
+                      border: Border.all(color: _teal.withValues(alpha: 0.35)),
                     ),
-                    child: const Row(
+                    child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(LucideIcons.refreshCw, color: _teal, size: 16),
-                        SizedBox(width: 8),
-                        Text('Try Again', style: TextStyle(color: _teal, fontWeight: FontWeight.w700, fontSize: 15)),
+                        const Icon(LucideIcons.refreshCw,
+                            color: _teal, size: 16),
+                        const SizedBox(width: 8),
+                        Text(
+                          _retrySecondsLeft > 0
+                              ? 'Re-scanning in ${_retrySecondsLeft}s (Tap to Scan Now)'
+                              : 'Try Again',
+                          style: const TextStyle(
+                              color: _teal,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15),
+                        ),
                       ],
                     ),
                   ),
@@ -393,16 +478,20 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     decoration: BoxDecoration(
-                      color: _green.withOpacity(0.10),
+                      color: _green.withValues(alpha: 0.10),
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: _green.withOpacity(0.30)),
+                      border: Border.all(color: _green.withValues(alpha: 0.30)),
                     ),
                     child: const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(LucideIcons.shieldCheck, color: _green, size: 16),
                         SizedBox(width: 8),
-                        Text('Arm via Provisioned JCOP4 Card', style: TextStyle(color: _green, fontWeight: FontWeight.w700, fontSize: 13)),
+                        Text('Arm via Provisioned JCOP4 Card',
+                            style: TextStyle(
+                                color: _green,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13)),
                       ],
                     ),
                   ),
@@ -416,19 +505,22 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.05),
+                    color: Colors.white.withValues(alpha: 0.05),
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: Colors.white.withOpacity(0.10)),
+                    border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.10)),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(LucideIcons.x, color: Colors.white.withOpacity(0.45), size: 16),
+                      Icon(LucideIcons.x,
+                          color: Colors.white.withValues(alpha: 0.45),
+                          size: 16),
                       const SizedBox(width: 8),
                       Text(
                         'Cancel',
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.45),
+                          color: Colors.white.withValues(alpha: 0.45),
                           fontWeight: FontWeight.w600,
                           fontSize: 15,
                         ),
@@ -444,11 +536,14 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(LucideIcons.shieldCheck, size: 10, color: Colors.white.withOpacity(0.25)),
+                  Icon(LucideIcons.shieldCheck,
+                      size: 10, color: Colors.white.withValues(alpha: 0.25)),
                   const SizedBox(width: 4),
                   Text(
-                    'Proximity-bound · ECDSA P-256 · Not relayable',
-                    style: TextStyle(color: Colors.white.withOpacity(0.25), fontSize: 10),
+                    'Proximity-bound · Turing Composition · Single-Tap Locked',
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.25),
+                        fontSize: 10),
                   ),
                 ],
               ),

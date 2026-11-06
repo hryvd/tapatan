@@ -41,6 +41,8 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
   Timer? _aiPollingTimer;
   bool _isAnalyzingFrame = false;
 
+  Timer? _nfcRetryTimer;
+
   @override
   void initState() {
     super.initState();
@@ -50,15 +52,20 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
   }
 
   void _armPassiveNfcCheckoutListener() {
+    _nfcRetryTimer?.cancel();
     PosNfcService.startPassiveCardListener(
       onCardDetected: (Map<String, dynamic> cardRes) {
         if (!mounted || _isCheckoutOpen) return;
         if (cardRes['success'] != true || cardRes['approved'] != true) {
           _showMessage(
-            (cardRes['error'] as String?) ??
-                'Unauthorized NFC Card: Only authentic Tapat JCOP4 cards with Turing Composition are accepted.',
+            '${(cardRes['error'] as String?) ?? 'Unauthorized NFC Card rejected.'} Re-scanning in 5s...',
           );
-          _armPassiveNfcCheckoutListener();
+          _nfcRetryTimer?.cancel();
+          _nfcRetryTimer = Timer(const Duration(seconds: 5), () {
+            if (mounted && !_isCheckoutOpen) {
+              _armPassiveNfcCheckoutListener();
+            }
+          });
           return;
         }
         final CartState cart = ref.read(cartProvider);
@@ -71,7 +78,12 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
           _showMessage(
             'Tapat JCOP4 Card verified (${cardRes['cardId'] ?? 'TAPAT_JCOP4_8821'}). Add items to cart to auto-checkout.',
           );
-          _armPassiveNfcCheckoutListener();
+          _nfcRetryTimer?.cancel();
+          _nfcRetryTimer = Timer(const Duration(seconds: 2), () {
+            if (mounted && !_isCheckoutOpen) {
+              _armPassiveNfcCheckoutListener();
+            }
+          });
         }
       },
     );
@@ -79,6 +91,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
 
   @override
   void dispose() {
+    _nfcRetryTimer?.cancel();
     _searchCtrl.dispose();
     _stopBackgroundScan();
     PosNfcService.stopSession();
@@ -316,6 +329,8 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     String cardId = '';
     bool isAutoApprovingCard = false;
     bool dialogClosed = false;
+    int retrySecondsLeft = 0;
+    Timer? dialogRetryTimer;
     Map<String, dynamic>? pendingPreVerifiedCard = preVerifiedCardResult;
 
     // Load all configured QR entries (decoded data strings)
@@ -376,10 +391,34 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                 ? (tendered - total).clamp(0, double.infinity)
                 : 0;
 
-            Future<void> triggerAutoSmartCardCheckout({
+            late Future<void> Function({Map<String, dynamic>? verifiedCard})
+                triggerAutoSmartCardCheckout;
+
+            void start5SecDialogRetry() {
+              dialogRetryTimer?.cancel();
+              if (dialogClosed || !ctx2.mounted) return;
+              setS(() => retrySecondsLeft = 5);
+              dialogRetryTimer =
+                  Timer.periodic(const Duration(seconds: 1), (Timer t) {
+                if (dialogClosed || !ctx2.mounted) {
+                  t.cancel();
+                  return;
+                }
+                if (retrySecondsLeft <= 1) {
+                  t.cancel();
+                  setS(() => retrySecondsLeft = 0);
+                  triggerAutoSmartCardCheckout();
+                } else {
+                  setS(() => retrySecondsLeft--);
+                }
+              });
+            }
+
+            triggerAutoSmartCardCheckout = ({
               Map<String, dynamic>? verifiedCard,
             }) async {
               if (isAutoApprovingCard || dialogClosed) return;
+              dialogRetryTimer?.cancel();
               isAutoApprovingCard = true;
               final Map<String, dynamic>? effectivePreVerified =
                   verifiedCard ?? pendingPreVerifiedCard;
@@ -387,6 +426,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
               setS(() {
                 method = 'smart_java_card';
                 cashError = null;
+                retrySecondsLeft = 0;
                 cardStage = 'reading';
                 cardStatusMsg =
                     'Hold authentic Tapat JCOP4 Smart Card against phone back...';
@@ -419,6 +459,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
               if (dialogClosed || !ctx2.mounted) return;
 
               if (res['approved'] == true && res['success'] == true) {
+                dialogRetryTimer?.cancel();
                 javaCardCtrl.text =
                     (res['token'] as String?) ?? 'JCOP4_APPROVED';
                 ref
@@ -450,9 +491,10 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                     cardStatusMsg = (res['error'] as String?) ??
                         'Unauthorized NFC Card: Only authentic Tapat JCOP4 Smart Cards with Turing Composition are accepted.';
                   });
+                  start5SecDialogRetry();
                 }
               }
-            }
+            };
 
             if (!listenerInitialized) {
               listenerInitialized = true;
@@ -477,6 +519,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                           cardStatusMsg = (cardRes['error'] as String?) ??
                               'Unauthorized NFC Card rejected by Turing Composition.';
                         });
+                        start5SecDialogRetry();
                       }
                     },
                   );
@@ -756,7 +799,11 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                                 onPressed: () =>
                                     triggerAutoSmartCardCheckout(),
                                 icon: const Icon(Icons.nfc_rounded, size: 16),
-                                label: const Text('Retry Tapat Card Tap'),
+                                label: Text(
+                                  retrySecondsLeft > 0
+                                      ? 'Re-scanning in ${retrySecondsLeft}s (Tap to Scan Now)'
+                                      : 'Retry Tapat Card Tap',
+                                ),
                               ),
                             ],
                             if (cardUid.isNotEmpty || cardId.isNotEmpty) ...<Widget>[
@@ -795,6 +842,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                 TextButton(
                   onPressed: () {
                     dialogClosed = true;
+                    dialogRetryTimer?.cancel();
                     PosNfcService.stopSession();
                     Navigator.pop(ctx);
                   },

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,12 +17,18 @@ class AuthScreen extends ConsumerStatefulWidget {
   ConsumerState<AuthScreen> createState() => _AuthScreenState();
 }
 
-class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStateMixin {
+class _AuthScreenState extends ConsumerState<AuthScreen>
+    with TickerProviderStateMixin {
   AuthView _view = AuthView.welcome;
   bool _isLoading = false;
   bool _nfcTapping = false;
+  bool _nfcCompleted = false;
+  bool _isNavigating = false;
   bool _showPass = false;
-  String _cardStep = 'idle'; // idle, scanning, success
+  String _cardStep = 'idle'; // idle, scanning, success, error
+
+  int _retrySecondsLeft = 0;
+  Timer? _retryTimer;
 
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
@@ -47,6 +54,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
 
   @override
   void dispose() {
+    _retryTimer?.cancel();
+    NfcService.stopSession();
     _pulseController.dispose();
     _nameController.dispose();
     _emailController.dispose();
@@ -66,24 +75,61 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
         _emailController.text = email;
       }
       if (mounted) {
-        setState(() => _view = AuthView.login);
+        _switchView(AuthView.login);
       }
     }
   }
 
   void _switchView(AuthView view) {
+    _retryTimer?.cancel();
+    NfcService.stopSession();
     setState(() {
       _view = view;
       _cardStep = 'idle';
+      _nfcTapping = false;
+      _retrySecondsLeft = 0;
+    });
+
+    if (view == AuthView.login && !_nfcCompleted && !_isNavigating) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted &&
+            _view == AuthView.login &&
+            !_nfcTapping &&
+            !_nfcCompleted &&
+            !_isNavigating) {
+          _handleNFCTapLogin(simulate: false);
+        }
+      });
+    }
+  }
+
+  void _start5SecRetryTimer(VoidCallback onRescan) {
+    _retryTimer?.cancel();
+    if (!mounted || _nfcCompleted || _isNavigating) return;
+    setState(() => _retrySecondsLeft = 5);
+    _retryTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || _nfcCompleted || _isNavigating) {
+        timer.cancel();
+        return;
+      }
+      if (_retrySecondsLeft <= 1) {
+        timer.cancel();
+        setState(() => _retrySecondsLeft = 0);
+        onRescan();
+      } else {
+        setState(() => _retrySecondsLeft--);
+      }
     });
   }
 
   void _showSnack(String msg, {bool isError = false}) {
     if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(msg),
-        backgroundColor: isError ? const Color(0xFFEF4444) : const Color(0xFF0369A1),
+        backgroundColor:
+            isError ? const Color(0xFFEF4444) : const Color(0xFF0369A1),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
@@ -93,8 +139,11 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
   // ── Demo Quick Sign-In ─────────────────────────────────────────────────────
 
   Future<void> _handleQuickDemoLogin() async {
+    if (_isNavigating) return;
+    _retryTimer?.cancel();
+    await NfcService.stopSession();
     setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 500));
+    await Future.delayed(const Duration(milliseconds: 400));
 
     await ref.read(userProvider.notifier).reloadFromPrefs();
     final prefs = await SharedPreferences.getInstance();
@@ -103,14 +152,13 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
     final savedEmail = prefs.getString('snfc_email') ?? '';
 
     if (isRegistered && savedName.isNotEmpty) {
-      // Preserve the existing registered user's profile and balance!
       ref.read(userProvider.notifier).armCard();
       ref.read(userProvider.notifier).updateJcopCardInfo(
             uid: prefs.getString('snfc_jcop_uid') ?? '04:7A:93:E2:10:88:01',
             pinRetriesLeft: 5,
             lifecycleState: 'ENROLLED',
           );
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
       _navigateToMain();
       return;
     }
@@ -131,20 +179,23 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
           lifecycleState: 'ENROLLED',
         );
 
-    setState(() => _isLoading = false);
+    if (mounted) setState(() => _isLoading = false);
     _navigateToMain();
   }
 
   // ── Standard Login ─────────────────────────────────────────────────────────
 
   Future<void> _handleLogin() async {
+    if (_isNavigating) return;
     if (_pinController.text.length < 4) {
       _showSnack('Please enter your 4 to 6-digit PIN', isError: true);
       return;
     }
 
+    _retryTimer?.cancel();
+    await NfcService.stopSession();
     setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 500));
+    await Future.delayed(const Duration(milliseconds: 400));
 
     await ref.read(userProvider.notifier).reloadFromPrefs();
     final prefs = await SharedPreferences.getInstance();
@@ -153,7 +204,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
 
     if (!isRegistered || savedName.isEmpty) {
       final emailInput = _emailController.text.trim();
-      final prefix = emailInput.contains('@') ? emailInput.split('@').first : emailInput;
+      final prefix = emailInput.contains('@')
+          ? emailInput.split('@').first
+          : emailInput;
       final displayName = prefix.isNotEmpty
           ? prefix[0].toUpperCase() + prefix.substring(1)
           : 'Cardholder';
@@ -172,25 +225,35 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
           lifecycleState: 'ENROLLED',
         );
 
-    setState(() => _isLoading = false);
+    if (mounted) setState(() => _isLoading = false);
     _navigateToMain();
   }
 
-  // ── NFC Tap Login ──────────────────────────────────────────────────────────
+  // ── NFC Tap Login (Single-Shot Action + 5s Auto Rescan on Failure) ─────────
 
   Future<void> _handleNFCTapLogin({bool simulate = false}) async {
-    if (_nfcTapping) return;
-    setState(() => _nfcTapping = true);
+    // Only one NFC action is allowed; ignore any duplicate scan if already tapping or completed
+    if (_nfcTapping || _nfcCompleted || _isNavigating) return;
+    _retryTimer?.cancel();
+    setState(() {
+      _nfcTapping = true;
+      _retrySecondsLeft = 0;
+    });
 
     try {
       await ref.read(userProvider.notifier).reloadFromPrefs();
       if (simulate) {
-        await Future.delayed(const Duration(milliseconds: 700));
+        _nfcCompleted = true;
+        await Future.delayed(const Duration(milliseconds: 500));
         await _handleQuickDemoLogin();
         return;
       }
 
       final res = await NfcService.readCardIdentity();
+      if (!mounted || _view != AuthView.login || _isNavigating || _nfcCompleted) {
+        return;
+      }
+
       if (res['success'] == true) {
         final uid = (res['uid'] as String?) ?? '04:7A:93:E2:10:88:01';
         final cardId = (res['cardId'] as String?) ?? 'TAPAT_JCOP4_8821';
@@ -202,12 +265,22 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
             user.cardId.isNotEmpty &&
             cardId != user.cardId &&
             cardId != 'TAPAT_JCOP4_8821') {
+          setState(() => _nfcTapping = false);
           _showSnack(
-            'Card Mismatch: Card ($cardId) is not bound to ${user.name}\'s account (${user.cardId}).',
+            'Card Mismatch: Card ($cardId) is not bound to ${user.name}\'s account (${user.cardId}). Re-scanning in 5s...',
             isError: true,
           );
+          _start5SecRetryTimer(() {
+            if (mounted && _view == AuthView.login && !_nfcCompleted) {
+              _handleNFCTapLogin(simulate: false);
+            }
+          });
           return;
         }
+
+        // Lock single-shot completion so any second NFC read is ignored
+        _nfcCompleted = true;
+        setState(() => _nfcTapping = false);
 
         if (user.name.isEmpty) {
           final prefix = owner.contains('@') ? owner.split('@').first : owner;
@@ -231,16 +304,26 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
             );
         _navigateToMain();
       } else {
+        setState(() => _nfcTapping = false);
         _showSnack(
-          (res['error'] as String?) ??
-              'Unauthorized NFC Card: Only an authentic Tapat JCOP4 Smart Card is supported.',
+          '${(res['error'] as String?) ?? 'NFC Card recognition failed.'} Re-scanning in 5s...',
           isError: true,
         );
+        _start5SecRetryTimer(() {
+          if (mounted && _view == AuthView.login && !_nfcCompleted) {
+            _handleNFCTapLogin(simulate: false);
+          }
+        });
       }
     } catch (e) {
-      _showSnack('NFC error: ${e.toString()}', isError: true);
-    } finally {
-      if (mounted) setState(() => _nfcTapping = false);
+      if (!mounted) return;
+      setState(() => _nfcTapping = false);
+      _showSnack('NFC error: $e. Re-scanning in 5s...', isError: true);
+      _start5SecRetryTimer(() {
+        if (mounted && _view == AuthView.login && !_nfcCompleted) {
+          _handleNFCTapLogin(simulate: false);
+        }
+      });
     }
   }
 
@@ -271,25 +354,45 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
 
     _switchView(AuthView.registerCard);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _view == AuthView.registerCard && _cardStep == 'idle') {
+      if (mounted &&
+          _view == AuthView.registerCard &&
+          _cardStep == 'idle' &&
+          !_nfcCompleted) {
         _handleCardRegister(simulate: false);
       }
     });
   }
 
   Future<void> _handleCardRegister({bool simulate = false}) async {
-    setState(() => _cardStep = 'scanning');
+    // Single-action guard: ignore duplicate tap while scanning or after success
+    if (_cardStep == 'scanning' ||
+        _cardStep == 'success' ||
+        _nfcCompleted ||
+        _isNavigating) {
+      return;
+    }
+
+    _retryTimer?.cancel();
+    setState(() {
+      _cardStep = 'scanning';
+      _retrySecondsLeft = 0;
+    });
+
     try {
-      final email = _emailController.text.trim().isNotEmpty ? _emailController.text.trim() : 'user@tapat.ph';
-      final name = _nameController.text.trim().isNotEmpty ? _nameController.text.trim() : 'Cardholder';
+      final email = _emailController.text.trim().isNotEmpty
+          ? _emailController.text.trim()
+          : 'user@tapat.ph';
+      final name = _nameController.text.trim().isNotEmpty
+          ? _nameController.text.trim()
+          : 'Cardholder';
 
       if (simulate) {
-        await Future.delayed(const Duration(milliseconds: 900));
-        const cardId = 'TAPAT_JCOP4_SIM_8821';
+        _nfcCompleted = true;
+        await Future.delayed(const Duration(milliseconds: 600));
+        const cardId = 'TAPAT_JCOP4_8821';
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('snfc_registered', true);
         await prefs.setString('snfc_pin', _pinController.text.trim());
-        await NfcService.writeCardIdentity(cardId, email, name: name);
         await ref.read(userProvider.notifier).setUserData(
               name,
               email,
@@ -303,8 +406,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
               lifecycleState: 'ENROLLED',
             );
 
-        setState(() => _cardStep = 'success');
-        await Future.delayed(const Duration(milliseconds: 600));
+        if (mounted) setState(() => _cardStep = 'success');
+        await Future.delayed(const Duration(milliseconds: 350));
         _navigateToMain();
         return;
       }
@@ -312,10 +415,18 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
       final cardId = NfcService.generateCardId();
       final res = await NfcService.writeCardIdentity(cardId, email, name: name);
 
+      if (!mounted ||
+          _view != AuthView.registerCard ||
+          _isNavigating ||
+          _nfcCompleted) {
+        return;
+      }
+
       if (res['success'] == true) {
+        _nfcCompleted = true;
         final uid = (res['uid'] as String?) ?? '04:7A:93:E2:10:88:01';
         setState(() => _cardStep = 'success');
-        await Future.delayed(const Duration(milliseconds: 600));
+
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('snfc_registered', true);
         await prefs.setString('snfc_pin', _pinController.text.trim());
@@ -331,19 +442,44 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
               pinRetriesLeft: 5,
               lifecycleState: 'ENROLLED',
             );
+        await Future.delayed(const Duration(milliseconds: 350));
         _navigateToMain();
       } else {
-        setState(() => _cardStep = 'idle');
-        _showSnack('Card not detected. Use "Simulate Card Tap" if running on emulator.', isError: true);
+        setState(() => _cardStep = 'error');
+        _showSnack(
+          '${(res['error'] as String?) ?? 'Card recognition failed.'} Re-scanning in 5s...',
+          isError: true,
+        );
+        _start5SecRetryTimer(() {
+          if (mounted &&
+              _view == AuthView.registerCard &&
+              !_nfcCompleted &&
+              !_isNavigating) {
+            _handleCardRegister(simulate: false);
+          }
+        });
       }
     } catch (e) {
-      setState(() => _cardStep = 'idle');
-      _showSnack('Error: $e', isError: true);
+      if (!mounted) return;
+      setState(() => _cardStep = 'error');
+      _showSnack('Error: $e. Re-scanning in 5s...', isError: true);
+      _start5SecRetryTimer(() {
+        if (mounted &&
+            _view == AuthView.registerCard &&
+            !_nfcCompleted &&
+            !_isNavigating) {
+          _handleCardRegister(simulate: false);
+        }
+      });
     }
   }
 
   void _navigateToMain() {
-    Navigator.pushReplacementNamed(context, '/main');
+    if (_isNavigating || !mounted) return;
+    _isNavigating = true;
+    _retryTimer?.cancel();
+    NfcService.stopSession();
+    Navigator.of(context).pushNamedAndRemoveUntil('/main', (route) => false);
   }
 
   // ── Background Glow ────────────────────────────────────────────────────────
@@ -366,9 +502,11 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
       child: Stack(
         children: [
           Positioned(
-            top: -80, left: -80,
+            top: -80,
+            left: -80,
             child: Container(
-              width: 320, height: 320,
+              width: 320,
+              height: 320,
               decoration: const BoxDecoration(
                 shape: BoxShape.circle,
                 color: Color(0x220369A1),
@@ -376,9 +514,11 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
             ),
           ),
           Positioned(
-            bottom: -60, right: -60,
+            bottom: -60,
+            right: -60,
             child: Container(
-              width: 260, height: 260,
+              width: 260,
+              height: 260,
               decoration: const BoxDecoration(
                 shape: BoxShape.circle,
                 color: Color(0x180891B2),
@@ -403,23 +543,30 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFF0891B2).withValues(alpha: 0.35)),
+        border:
+            Border.all(color: const Color(0xFF0891B2).withValues(alpha: 0.35)),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Row(
         children: [
-          Icon(icon, color: const Color(0xFF38BDF8).withValues(alpha: 0.8), size: 20),
+          Icon(icon,
+              color: const Color(0xFF38BDF8).withValues(alpha: 0.8), size: 20),
           const SizedBox(width: 12),
           Expanded(
             child: TextField(
               controller: controller,
               obscureText: isPassword && !_showPass,
-              keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+              keyboardType:
+                  isNumber ? TextInputType.number : TextInputType.text,
               maxLength: maxLength,
-              style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500),
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500),
               decoration: InputDecoration(
                 hintText: hint,
-                hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 14),
+                hintStyle: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.35), fontSize: 14),
                 border: InputBorder.none,
                 counterText: '',
               ),
@@ -442,7 +589,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
           const Spacer(flex: 1),
           // Shield Logo
           Container(
-            width: 88, height: 88,
+            width: 88,
+            height: 88,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(28),
               gradient: const LinearGradient(
@@ -450,7 +598,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
-              border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.5)),
+              border: Border.all(
+                  color: const Color(0xFF38BDF8).withValues(alpha: 0.5)),
               boxShadow: [
                 BoxShadow(
                   color: const Color(0xFF0369A1).withValues(alpha: 0.5),
@@ -464,42 +613,67 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
           const SizedBox(height: 20),
           const Text(
             'Bantay',
-            style: TextStyle(fontSize: 30, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: -0.5),
+            style: TextStyle(
+                fontSize: 30,
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+                letterSpacing: -0.5),
           ),
           const SizedBox(height: 4),
           Text(
             'Dual-Layered Defense & JCOP J3R150 Hardware Security',
-            style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.5)),
+            style: TextStyle(
+                fontSize: 12, color: Colors.white.withValues(alpha: 0.5)),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 32),
 
           // Feature pills
           ...[
-            {'icon': LucideIcons.shieldCheck, 'label': 'JCOP J3R150 Smart Card Security', 'color': const Color(0xFF0369A1)},
-            {'icon': LucideIcons.store, 'label': 'Dual-Layered Protection with Sar-E Store', 'color': const Color(0xFF0891B2)},
-            {'icon': LucideIcons.keyRound, 'label': 'Hardware-Signed ECDSA P-256 Key', 'color': const Color(0xFF06B6D4)},
+            {
+              'icon': LucideIcons.shieldCheck,
+              'label': 'JCOP J3R150 Smart Card Security',
+              'color': const Color(0xFF0369A1)
+            },
+            {
+              'icon': LucideIcons.store,
+              'label': 'Dual-Layered Protection with Sar-E Store',
+              'color': const Color(0xFF0891B2)
+            },
+            {
+              'icon': LucideIcons.keyRound,
+              'label': 'Turing Composition Mutual Authentication',
+              'color': const Color(0xFF06B6D4)
+            },
           ].map((item) => Padding(
                 padding: const EdgeInsets.only(bottom: 10.0),
                 child: GlassContainer(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   backgroundColor: Colors.white.withValues(alpha: 0.04),
-                  border: Border.all(color: (item['color'] as Color).withValues(alpha: 0.3)),
+                  border: Border.all(
+                      color: (item['color'] as Color).withValues(alpha: 0.3)),
                   child: Row(
                     children: [
                       Container(
-                        width: 34, height: 34,
+                        width: 34,
+                        height: 34,
                         decoration: BoxDecoration(
-                          color: (item['color'] as Color).withValues(alpha: 0.2),
+                          color:
+                              (item['color'] as Color).withValues(alpha: 0.2),
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: Icon(item['icon'] as IconData, size: 17, color: item['color'] as Color),
+                        child: Icon(item['icon'] as IconData,
+                            size: 17, color: item['color'] as Color),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
                           item['label'] as String,
-                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Colors.white.withValues(alpha: 0.85)),
+                          style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white.withValues(alpha: 0.85)),
                         ),
                       ),
                     ],
@@ -512,7 +686,11 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
           // Sign In button
           GlassButton(
             onPressed: () => _switchView(AuthView.login),
-            child: const Text('Sign In', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Colors.white)),
+            child: const Text('Sign In',
+                style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white)),
           ),
           const SizedBox(height: 12),
 
@@ -520,7 +698,11 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
           GlassButton(
             gradientColors: const [Color(0xFF0C1E35), Color(0xFF0A1628)],
             onPressed: () => _switchView(AuthView.signup),
-            child: const Text('Create Account', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white)),
+            child: const Text('Create Account',
+                style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white)),
           ),
           const SizedBox(height: 12),
 
@@ -532,11 +714,15 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(LucideIcons.zap, size: 14, color: Color(0xFFF59E0B)),
+                  const Icon(LucideIcons.zap,
+                      size: 14, color: Color(0xFFF59E0B)),
                   const SizedBox(width: 6),
                   Text(
                     'Quick Demo Sign-In (Pre-Loaded Account)',
-                    style: TextStyle(color: const Color(0xFFF59E0B).withValues(alpha: 0.9), fontSize: 12, fontWeight: FontWeight.w700),
+                    style: TextStyle(
+                        color: const Color(0xFFF59E0B).withValues(alpha: 0.9),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700),
                   ),
                 ],
               ),
@@ -561,19 +747,27 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
           child: GestureDetector(
             onTap: () => _switchView(AuthView.welcome),
             child: Container(
-              width: 38, height: 38,
+              width: 38,
+              height: 38,
               decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Icon(LucideIcons.arrowLeft, color: Colors.white, size: 18),
+              child: const Icon(LucideIcons.arrowLeft,
+                  color: Colors.white, size: 18),
             ),
           ),
         ),
         const SizedBox(height: 24),
-        const Text('Welcome Back', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.white)),
+        const Text('Welcome Back',
+            style: TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.w900,
+                color: Colors.white)),
         const SizedBox(height: 4),
-        Text('Enter your email and 6-digit PIN to sign in', style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.5))),
+        Text('Tap your Tapat Card or enter your 6-digit PIN to sign in',
+            style: TextStyle(
+                fontSize: 13, color: Colors.white.withValues(alpha: 0.5))),
         const SizedBox(height: 28),
 
         // Email field
@@ -613,20 +807,26 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
                 final savedEmail = prefs.getString('snfc_email') ?? '';
                 _emailController.text =
                     savedEmail.isNotEmpty ? savedEmail : 'richard@tapat.ph';
-                _pinController.text =
-                    prefs.getString('snfc_pin') ?? '123456';
+                _pinController.text = prefs.getString('snfc_pin') ?? '123456';
                 if (mounted) setState(() {});
               },
               child: Text(
                 'Autofill Registered Credentials',
-                style: TextStyle(color: const Color(0xFF38BDF8).withValues(alpha: 0.8), fontSize: 11, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                    color: const Color(0xFF38BDF8).withValues(alpha: 0.8),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600),
               ),
             ),
             GestureDetector(
-              onTap: () => _showSnack('PIN can be reset via registered email verification.'),
+              onTap: () => _showSnack(
+                  'PIN can be reset via registered email verification.'),
               child: Text(
                 'Forgot PIN?',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.4),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600),
               ),
             ),
           ],
@@ -637,19 +837,31 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
         GlassButton(
           onPressed: _handleLogin,
           isLoading: _isLoading,
-          child: const Text('Sign In', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Colors.white)),
+          child: const Text('Sign In',
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white)),
         ),
         const SizedBox(height: 16),
 
         // Divider
         Row(
           children: [
-            Expanded(child: Container(height: 1, color: Colors.white.withValues(alpha: 0.1))),
+            Expanded(
+                child: Container(
+                    height: 1, color: Colors.white.withValues(alpha: 0.1))),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14),
-              child: Text('OR', style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 11, fontWeight: FontWeight.bold)),
+              child: Text('OR',
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.3),
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold)),
             ),
-            Expanded(child: Container(height: 1, color: Colors.white.withValues(alpha: 0.1))),
+            Expanded(
+                child: Container(
+                    height: 1, color: Colors.white.withValues(alpha: 0.1))),
           ],
         ),
         const SizedBox(height: 16),
@@ -670,22 +882,33 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
                 end: Alignment.bottomRight,
               ),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFF0891B2).withValues(alpha: 0.4)),
+              border: Border.all(
+                  color: const Color(0xFF0891B2).withValues(alpha: 0.4)),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 if (_nfcTapping)
                   const SizedBox(
-                    width: 18, height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF38BDF8)),
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Color(0xFF38BDF8)),
                   )
                 else
-                  const Icon(LucideIcons.wifi, color: Color(0xFF38BDF8), size: 18),
+                  const Icon(LucideIcons.wifi,
+                      color: Color(0xFF38BDF8), size: 18),
                 const SizedBox(width: 10),
                 Text(
-                  _nfcTapping ? 'Waiting for Tapat Card Tap...' : 'Tap Tapat Card to Unlock',
-                  style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 14, fontWeight: FontWeight.bold),
+                  _nfcTapping
+                      ? 'Ready: Tap Tapat Card Now...'
+                      : (_retrySecondsLeft > 0
+                          ? 'Failed — Re-scanning in ${_retrySecondsLeft}s (Tap to retry now)'
+                          : 'Tap Tapat Card to Sign In'),
+                  style: const TextStyle(
+                      color: Color(0xFF38BDF8),
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.bold),
                 ),
               ],
             ),
@@ -699,7 +922,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
             onPressed: () => _handleNFCTapLogin(simulate: true),
             child: Text(
               'Simulate Card Tap (Demo Mode)',
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12),
+              style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.45), fontSize: 12),
             ),
           ),
         ),
@@ -711,11 +935,13 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
             child: RichText(
               text: TextSpan(
                 text: 'Don\'t have an account? ',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13),
+                style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.5), fontSize: 13),
                 children: const [
                   TextSpan(
                     text: 'Create One',
-                    style: TextStyle(color: Color(0xFF38BDF8), fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                        color: Color(0xFF38BDF8), fontWeight: FontWeight.bold),
                   ),
                 ],
               ),
@@ -739,19 +965,27 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
           child: GestureDetector(
             onTap: () => _switchView(AuthView.welcome),
             child: Container(
-              width: 38, height: 38,
+              width: 38,
+              height: 38,
               decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Icon(LucideIcons.arrowLeft, color: Colors.white, size: 18),
+              child: const Icon(LucideIcons.arrowLeft,
+                  color: Colors.white, size: 18),
             ),
           ),
         ),
         const SizedBox(height: 24),
-        const Text('Create Account', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.white)),
+        const Text('Create Account',
+            style: TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.w900,
+                color: Colors.white)),
         const SizedBox(height: 4),
-        Text('Step 1 of 2: Profile & 6-Digit PIN', style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.5))),
+        Text('Step 1 of 2: Profile & 6-Digit PIN',
+            style: TextStyle(
+                fontSize: 13, color: Colors.white.withValues(alpha: 0.5))),
         const SizedBox(height: 24),
 
         _buildTextField(
@@ -801,7 +1035,11 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
           child: const Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text('Continue to Tapat Card', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Colors.white)),
+              Text('Continue to Tapat Card',
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white)),
               SizedBox(width: 8),
               Icon(LucideIcons.arrowRight, size: 16, color: Colors.white),
             ],
@@ -815,11 +1053,13 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
             child: RichText(
               text: TextSpan(
                 text: 'Already registered? ',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13),
+                style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.5), fontSize: 13),
                 children: const [
                   TextSpan(
                     text: 'Sign In',
-                    style: TextStyle(color: Color(0xFF38BDF8), fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                        color: Color(0xFF38BDF8), fontWeight: FontWeight.bold),
                   ),
                 ],
               ),
@@ -843,21 +1083,28 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
             child: GestureDetector(
               onTap: () => _switchView(AuthView.signup),
               child: Container(
-                width: 38, height: 38,
+                width: 38,
+                height: 38,
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(LucideIcons.arrowLeft, color: Colors.white, size: 18),
+                child: const Icon(LucideIcons.arrowLeft,
+                    color: Colors.white, size: 18),
               ),
             ),
           ),
           const SizedBox(height: 20),
-          const Text('Bind Tapat Card', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.white)),
+          const Text('Bind Tapat Card',
+              style: TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white)),
           const SizedBox(height: 4),
           Text(
             'Step 2 of 2: Hold your JCOP J3R150 smart card to the back of your phone',
-            style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.5)),
+            style: TextStyle(
+                fontSize: 13, color: Colors.white.withValues(alpha: 0.5)),
             textAlign: TextAlign.center,
           ),
           const Spacer(),
@@ -874,7 +1121,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
                     height: 180 * _pulseAnim.value,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: const Color(0xFF0891B2).withValues(alpha: 0.12 / _pulseAnim.value),
+                      color: const Color(0xFF0891B2)
+                          .withValues(alpha: 0.12 / _pulseAnim.value),
                     ),
                   ),
                   Container(
@@ -882,17 +1130,27 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
                     height: 130 * _pulseAnim.value,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: const Color(0xFF0369A1).withValues(alpha: 0.2 / _pulseAnim.value),
+                      color: const Color(0xFF0369A1)
+                          .withValues(alpha: 0.2 / _pulseAnim.value),
                     ),
                   ),
                   Container(
-                    width: 96, height: 96,
+                    width: 96,
+                    height: 96,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       gradient: LinearGradient(
                         colors: _cardStep == 'success'
                             ? [const Color(0xFF10B981), const Color(0xFF059669)]
-                            : [const Color(0xFF0369A1), const Color(0xFF0891B2)],
+                            : _cardStep == 'error'
+                                ? [
+                                    const Color(0xFF991B1B),
+                                    const Color(0xFFEF4444)
+                                  ]
+                                : [
+                                    const Color(0xFF0369A1),
+                                    const Color(0xFF0891B2)
+                                  ],
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                       ),
@@ -908,7 +1166,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
                     child: Icon(
                       _cardStep == 'success'
                           ? LucideIcons.checkCircle
-                          : (_cardStep == 'scanning' ? LucideIcons.refreshCw : LucideIcons.wifi),
+                          : (_cardStep == 'scanning'
+                              ? LucideIcons.refreshCw
+                              : LucideIcons.wifi),
                       color: Colors.white,
                       size: 42,
                     ),
@@ -921,35 +1181,56 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
 
           Text(
             _cardStep == 'success'
-                ? 'Card Registered & Linked Successfully!'
-                : (_cardStep == 'scanning' ? 'Writing identity to card secure element...' : 'Ready to Tap Card'),
+                ? 'Card Registered & Linked — Routing to Home...'
+                : (_cardStep == 'scanning'
+                    ? 'Writing Turing identity to card secure element...'
+                    : (_retrySecondsLeft > 0
+                        ? 'Recognition failed — Auto re-scanning in ${_retrySecondsLeft}s...'
+                        : 'Ready to Tap Card')),
             style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.bold,
-              color: _cardStep == 'success' ? const Color(0xFF34D399) : Colors.white,
+              color: _cardStep == 'success'
+                  ? const Color(0xFF34D399)
+                  : (_cardStep == 'error'
+                      ? const Color(0xFFF87171)
+                      : Colors.white),
             ),
+            textAlign: TextAlign.center,
           ),
           const SizedBox(height: 6),
           Text(
-            'Stores ECDSA P-256 public credential linked to your account.',
-            style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.4)),
+            'Single-tap Turing Composition binding · Automatically routes to Home upon success.',
+            style: TextStyle(
+                fontSize: 12, color: Colors.white.withValues(alpha: 0.4)),
             textAlign: TextAlign.center,
           ),
           const Spacer(),
 
           // Physical card scan button
           GlassButton(
-            onPressed: _cardStep == 'scanning' ? null : () => _handleCardRegister(simulate: false),
+            onPressed: _cardStep == 'scanning' || _cardStep == 'success'
+                ? null
+                : () => _handleCardRegister(simulate: false),
             child: Text(
-              _cardStep == 'scanning' ? 'Scanning Card...' : 'Scan Physical Tapat Card',
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Colors.white),
+              _cardStep == 'scanning'
+                  ? 'Scanning Card...'
+                  : (_retrySecondsLeft > 0
+                      ? 'Re-scanning in ${_retrySecondsLeft}s (Tap to Scan Now)'
+                      : 'Scan Physical Tapat Card'),
+              style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white),
             ),
           ),
           const SizedBox(height: 12),
 
           // Simulation button for testing on PC/emulator
           GestureDetector(
-            onTap: _cardStep == 'scanning' ? null : () => _handleCardRegister(simulate: true),
+            onTap: _cardStep == 'scanning' || _cardStep == 'success'
+                ? null
+                : () => _handleCardRegister(simulate: true),
             child: Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 14),
@@ -961,7 +1242,10 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
               child: const Center(
                 child: Text(
                   'Simulate Card Tap (Testing Mode)',
-                  style: TextStyle(color: Color(0xFF38BDF8), fontSize: 13, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                      color: Color(0xFF38BDF8),
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold),
                 ),
               ),
             ),

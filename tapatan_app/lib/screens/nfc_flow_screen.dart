@@ -61,6 +61,9 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
   static const int cardTimeoutSeconds = 5 * 60;
   int _timeoutSecsLeft = cardTimeoutSeconds;
   Timer? _timer;
+  int _retrySecondsLeft = 0;
+  Timer? _retryTimer;
+  bool _writeCompleted = false;
 
   static const double microThreshold = 100.0;
   static const double mediumThreshold = 500.0;
@@ -71,7 +74,28 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
   @override
   void dispose() {
     _timer?.cancel();
+    _retryTimer?.cancel();
+    NfcService.stopSession();
     super.dispose();
+  }
+
+  void _start5SecRetryTimer() {
+    _retryTimer?.cancel();
+    if (!mounted || _writeCompleted || _step == FlowStep.ready) return;
+    setState(() => _retrySecondsLeft = 5);
+    _retryTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || _writeCompleted || _step == FlowStep.ready) {
+        timer.cancel();
+        return;
+      }
+      if (_retrySecondsLeft <= 1) {
+        timer.cancel();
+        setState(() => _retrySecondsLeft = 0);
+        _startWriteFlow(simulate: false);
+      } else {
+        setState(() => _retrySecondsLeft--);
+      }
+    });
   }
 
   void _startTimer() {
@@ -158,6 +182,9 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
   }
 
   Future<void> _completeWriteSuccess() async {
+    if (_writeCompleted) return;
+    _writeCompleted = true;
+    _retryTimer?.cancel();
     await JcopApduService.stopSession();
     if (!mounted) return;
     await CardRevocationService.incrementUseCount(widget.cardId);
@@ -170,7 +197,7 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
     _startTimer();
 
     // Automatically acknowledge & approve the secured card payment
-    Future.delayed(const Duration(milliseconds: 1300), () {
+    Future.delayed(const Duration(milliseconds: 1100), () {
       if (mounted && _step == FlowStep.ready) {
         widget.onTransactionComplete?.call(_amount);
       }
@@ -178,6 +205,8 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
   }
 
   Future<void> _startWriteFlow({bool simulate = false}) async {
+    if (_writeCompleted || _step == FlowStep.writing) return;
+    _retryTimer?.cancel();
     final newPayload =
         NfcService.buildTokenPayload(widget.cardId, _amount > 0 ? _amount : null);
 
@@ -186,6 +215,7 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
       _step = FlowStep.writing;
       _jcopStep = JcopAuthStep.waiting;
       _errorMsg = '';
+      _retrySecondsLeft = 0;
     });
 
     if (simulate) {
@@ -194,10 +224,10 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
       return;
     }
 
-    // Unified single-tap JCOP4 ISO-DEP + NDEF write flow
+    // Unified single-tap JCOP4 ISO-DEP write flow
     final result = await NfcService.writeTokenToNfc(newPayload);
 
-    if (!mounted) return;
+    if (!mounted || _writeCompleted) return;
 
     if (result['success'] == true) {
       await _completeWriteSuccess();
@@ -206,11 +236,13 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
         _errorMsg = result['error'] ?? 'NFC write failed.';
         _step = FlowStep.error;
       });
+      _start5SecRetryTimer();
     }
   }
 
   void _reset() {
     _timer?.cancel();
+    _retryTimer?.cancel();
     setState(() {
       _step = FlowStep.idle;
       _payload = null;
@@ -220,6 +252,8 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
       _errorMsg = "";
       _pinRetriesLeft = -1;
       _isJcopFlow = false;
+      _writeCompleted = false;
+      _retrySecondsLeft = 0;
       _jcopStep = JcopAuthStep.waiting;
     });
   }
@@ -731,26 +765,48 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
       children: [
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 20),
+          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
           decoration: BoxDecoration(
             color: const Color(0x1FEF4444),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: const Color(0x4DEF4444)),
           ),
           alignment: Alignment.center,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
+          child: Column(
             children: [
-              const Icon(LucideIcons.alertTriangle, color: Color(0xFFF87171), size: 20),
-              const SizedBox(width: 8),
-              Text(_errorMsg.isNotEmpty ? _errorMsg : "NFC write failed", style: const TextStyle(color: Color(0xFFF87171), fontSize: 14, fontWeight: FontWeight.bold)),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(LucideIcons.alertTriangle, color: Color(0xFFF87171), size: 20),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      _errorMsg.isNotEmpty ? _errorMsg : "NFC write failed",
+                      style: const TextStyle(color: Color(0xFFF87171), fontSize: 14, fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
+              ),
+              if (_retrySecondsLeft > 0) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Re-scanning automatically in ${_retrySecondsLeft}s...',
+                  style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+              ],
             ],
           ),
         ),
         const SizedBox(height: 16),
         GlassButton(
-          onPressed: _reset,
-          child: const Text("Try Again", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          onPressed: () => _startWriteFlow(simulate: false),
+          child: Text(
+            _retrySecondsLeft > 0
+                ? "Re-scanning in ${_retrySecondsLeft}s (Tap to Scan Now)"
+                : "Try Again",
+            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+          ),
         )
       ],
     );

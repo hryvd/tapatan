@@ -230,12 +230,13 @@ class JcopApduService {
     }
 
     try {
+      final int p2Byte = fastReadIdentity ? 0x01 : 0x00;
       ApduResponse response = await transceive(
         tag,
         cla: 0x00,
         ins: ApduIns.selectFile,
         p1: 0x04,
-        p2: 0x00,
+        p2: p2Byte,
         data: kTapatanAppletAid,
         le: 0x00,
       );
@@ -246,7 +247,7 @@ class JcopApduService {
           cla: 0x00,
           ins: ApduIns.selectFile,
           p1: 0x04,
-          p2: 0x00,
+          p2: p2Byte,
           data: kTapatanAppletAid,
         );
       }
@@ -269,11 +270,15 @@ class JcopApduService {
         };
       }
 
+      final String? decodedIdentity =
+          TuringCompositionCodec.decodeUtf8Frame(response.data);
       final handshakeNonce =
           TuringCompositionCodec.extractHandshakeNonce(response.data);
       return {
         'success': true,
         if (handshakeNonce != null) 'nonce': handshakeNonce,
+        if (decodedIdentity != null && decodedIdentity.isNotEmpty)
+          'identityText': decodedIdentity,
       };
     } catch (e) {
       return {

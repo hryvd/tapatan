@@ -183,19 +183,32 @@ class PosNfcService {
     } catch (_) {}
   }
 
+  static DateTime? _lastSuccessTime;
+
   /// Starts a background listener while on the POS Scanner or Checkout screen.
   /// Only authentic Tapat JCOP4 Smart Cards passing Turing Composition succeed.
   static Future<void> startPassiveCardListener({
     required void Function(Map<String, dynamic> cardResult) onCardDetected,
   }) async {
     if (!await isNfcAvailable()) return;
+    bool tagHandled = false;
     try {
       await NfcManager.instance.startSession(
         pollingOptions: <NfcPollingOption>{
           NfcPollingOption.iso14443,
         },
         onDiscovered: (NfcTag tag) async {
+          if (tagHandled) return;
+          if (_lastSuccessTime != null &&
+              DateTime.now().difference(_lastSuccessTime!).inMilliseconds <
+                  1800) {
+            return;
+          }
+          tagHandled = true;
           final Map<String, dynamic> res = await _processDiscoveredTag(tag);
+          if (res['success'] == true && res['approved'] == true) {
+            _lastSuccessTime = DateTime.now();
+          }
           try {
             await NfcManager.instance.stopSession();
           } catch (_) {}
@@ -259,6 +272,7 @@ class PosNfcService {
 
       final Completer<Map<String, dynamic>> completer =
           Completer<Map<String, dynamic>>();
+      bool tagHandled = false;
 
       try {
         await NfcManager.instance.startSession(
@@ -266,8 +280,12 @@ class PosNfcService {
             NfcPollingOption.iso14443,
           },
           onDiscovered: (NfcTag tag) async {
-            if (completer.isCompleted) return;
+            if (tagHandled || completer.isCompleted) return;
+            tagHandled = true;
             final Map<String, dynamic> res = await _processDiscoveredTag(tag);
+            if (res['success'] == true && res['approved'] == true) {
+              _lastSuccessTime = DateTime.now();
+            }
             try {
               await NfcManager.instance.stopSession();
             } catch (_) {}
