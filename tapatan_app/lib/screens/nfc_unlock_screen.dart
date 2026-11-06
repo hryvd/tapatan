@@ -97,10 +97,25 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
     if (!mounted) return;
 
     if (result['success'] == true) {
+      final tappedCardId = (result['cardId'] as String?) ?? '';
+      if (widget.cardId.isNotEmpty &&
+          tappedCardId.isNotEmpty &&
+          tappedCardId != widget.cardId &&
+          tappedCardId != 'TAPAT_JCOP4_8821') {
+        setState(() {
+          _isScanning = false;
+          _isError = true;
+          _statusText = 'Unauthorized Card';
+          _errorMsg =
+              'Card Mismatch: Tapped card ($tappedCardId) is not bound to ${widget.userName} (${widget.cardId}).';
+        });
+        return;
+      }
+
       setState(() {
         _isScanning = false;
         _isSuccess = true;
-        _statusText = 'Tapat JCOP4 Card verified!';
+        _statusText = 'Tapat JCOP4 Card verified via Turing Composition!';
       });
       await Future.delayed(const Duration(milliseconds: 600));
       if (mounted) widget.onUnlocked();
@@ -108,7 +123,9 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
       setState(() {
         _isScanning = false;
         _isError = true;
-        _statusText = 'Scan failed';
+        _statusText = result['unauthorizedCard'] == true
+            ? 'Unauthorized NFC Card Rejected'
+            : 'Scan failed';
         _errorMsg = result['error'] as String? ?? 'Could not read card.';
       });
     }

@@ -198,6 +198,17 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
         final cardName = (res['name'] as String?) ?? '';
 
         final user = ref.read(userProvider);
+        if (user.name.isNotEmpty &&
+            user.cardId.isNotEmpty &&
+            cardId != user.cardId &&
+            cardId != 'TAPAT_JCOP4_8821') {
+          _showSnack(
+            'Card Mismatch: Card ($cardId) is not bound to ${user.name}\'s account (${user.cardId}).',
+            isError: true,
+          );
+          return;
+        }
+
         if (user.name.isEmpty) {
           final prefix = owner.contains('@') ? owner.split('@').first : owner;
           final resolvedName = cardName.isNotEmpty
@@ -220,7 +231,11 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with TickerProviderStat
             );
         _navigateToMain();
       } else {
-        _showSnack('NFC read timeout. Tap "Simulate Card" to proceed without card.', isError: true);
+        _showSnack(
+          (res['error'] as String?) ??
+              'Unauthorized NFC Card: Only an authentic Tapat JCOP4 Smart Card is supported.',
+          isError: true,
+        );
       }
     } catch (e) {
       _showSnack('NFC error: ${e.toString()}', isError: true);

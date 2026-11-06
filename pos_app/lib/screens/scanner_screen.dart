@@ -53,12 +53,23 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     PosNfcService.startPassiveCardListener(
       onCardDetected: (Map<String, dynamic> cardRes) {
         if (!mounted || _isCheckoutOpen) return;
+        if (cardRes['success'] != true || cardRes['approved'] != true) {
+          _showMessage(
+            (cardRes['error'] as String?) ??
+                'Unauthorized NFC Card: Only authentic Tapat JCOP4 cards with Turing Composition are accepted.',
+          );
+          _armPassiveNfcCheckoutListener();
+          return;
+        }
         final CartState cart = ref.read(cartProvider);
         if (!cart.isEmpty) {
-          _showCheckoutDialog(initialMethod: 'smart_java_card');
+          _showCheckoutDialog(
+            initialMethod: 'smart_java_card',
+            preVerifiedCardResult: cardRes,
+          );
         } else {
           _showMessage(
-            'Tapat JCOP4 Card recognized (${cardRes['cardId'] ?? 'TAPAT_JCOP4_8821'}). Add items to cart to auto-checkout.',
+            'Tapat JCOP4 Card verified (${cardRes['cardId'] ?? 'TAPAT_JCOP4_8821'}). Add items to cart to auto-checkout.',
           );
           _armPassiveNfcCheckoutListener();
         }
@@ -282,7 +293,10 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
 
   // ─── Checkout Dialog ─────────────────────────────────────────────────────
 
-  Future<void> _showCheckoutDialog({String? initialMethod}) async {
+  Future<void> _showCheckoutDialog({
+    String? initialMethod,
+    Map<String, dynamic>? preVerifiedCardResult,
+  }) async {
     final CartState cart = ref.read(cartProvider);
     if (cart.isEmpty) {
       _showMessage('Cart is empty');
@@ -295,12 +309,14 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     final TextEditingController javaCardCtrl = TextEditingController();
     String method = initialMethod ?? cart.paymentMethod;
     String? cashError;
-    String cardStage = 'idle'; // idle, reading, acknowledged, approved
-    String cardStatusMsg = 'Tap Tapat JCOP4 Smart Card to auto-approve payment';
+    String cardStage = 'idle'; // idle, reading, acknowledged, approved, error
+    String cardStatusMsg =
+        'Tap authentic Tapat JCOP4 Smart Card to auto-approve payment';
     String cardUid = '';
     String cardId = '';
     bool isAutoApprovingCard = false;
     bool dialogClosed = false;
+    Map<String, dynamic>? pendingPreVerifiedCard = preVerifiedCardResult;
 
     // Load all configured QR entries (decoded data strings)
     final SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -360,19 +376,26 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                 ? (tendered - total).clamp(0, double.infinity)
                 : 0;
 
-            Future<void> triggerAutoSmartCardCheckout() async {
+            Future<void> triggerAutoSmartCardCheckout({
+              Map<String, dynamic>? verifiedCard,
+            }) async {
               if (isAutoApprovingCard || dialogClosed) return;
               isAutoApprovingCard = true;
+              final Map<String, dynamic>? effectivePreVerified =
+                  verifiedCard ?? pendingPreVerifiedCard;
+              pendingPreVerifiedCard = null;
               setS(() {
                 method = 'smart_java_card';
                 cashError = null;
                 cardStage = 'reading';
-                cardStatusMsg = 'Reading Tapat JCOP4 Smart Card...';
+                cardStatusMsg =
+                    'Hold authentic Tapat JCOP4 Smart Card against phone back...';
               });
 
               final Map<String, dynamic> res =
                   await PosNfcService.readAndApproveCardTransaction(
                 amount: total,
+                preVerifiedCardResult: effectivePreVerified,
                 onStatus: (
                   String stage,
                   String message,
@@ -395,7 +418,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
 
               if (dialogClosed || !ctx2.mounted) return;
 
-              if (res['approved'] == true) {
+              if (res['approved'] == true && res['success'] == true) {
                 javaCardCtrl.text =
                     (res['token'] as String?) ?? 'JCOP4_APPROVED';
                 ref
@@ -421,6 +444,13 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                 }
               } else {
                 isAutoApprovingCard = false;
+                if (!dialogClosed && ctx2.mounted) {
+                  setS(() {
+                    cardStage = 'error';
+                    cardStatusMsg = (res['error'] as String?) ??
+                        'Unauthorized NFC Card: Only authentic Tapat JCOP4 Smart Cards with Turing Composition are accepted.';
+                  });
+                }
               }
             }
 
@@ -429,13 +459,25 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (dialogClosed || !ctx2.mounted) return;
                 if (method == 'smart_java_card') {
-                  triggerAutoSmartCardCheckout();
+                  triggerAutoSmartCardCheckout(
+                    verifiedCard: pendingPreVerifiedCard,
+                  );
                 } else {
                   // Listen for physical card tap even while Cash/QR is selected
                   PosNfcService.startPassiveCardListener(
                     onCardDetected: (Map<String, dynamic> cardRes) {
                       if (dialogClosed || !ctx2.mounted) return;
-                      triggerAutoSmartCardCheckout();
+                      if (cardRes['success'] == true &&
+                          cardRes['approved'] == true) {
+                        triggerAutoSmartCardCheckout(verifiedCard: cardRes);
+                      } else {
+                        setS(() {
+                          method = 'smart_java_card';
+                          cardStage = 'error';
+                          cardStatusMsg = (cardRes['error'] as String?) ??
+                              'Unauthorized NFC Card rejected by Turing Composition.';
+                        });
+                      }
                     },
                   );
                 }
@@ -661,12 +703,16 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                         decoration: BoxDecoration(
                           color: cardStage == 'approved'
                               ? c.success.withValues(alpha: 0.12)
-                              : c.primary.withValues(alpha: 0.08),
+                              : cardStage == 'error'
+                                  ? c.error.withValues(alpha: 0.12)
+                                  : c.primary.withValues(alpha: 0.08),
                           borderRadius: BorderRadius.circular(14),
                           border: Border.all(
                             color: cardStage == 'approved'
                                 ? c.success
-                                : c.primary.withValues(alpha: 0.35),
+                                : cardStage == 'error'
+                                    ? c.error
+                                    : c.primary.withValues(alpha: 0.35),
                             width: 1.5,
                           ),
                         ),
@@ -678,6 +724,9 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                             else if (cardStage == 'acknowledged')
                               Icon(Icons.security_rounded,
                                   color: c.primary, size: 40)
+                            else if (cardStage == 'error')
+                              Icon(Icons.gpp_bad_rounded,
+                                  color: c.error, size: 40)
                             else
                               SizedBox(
                                 width: 34,
@@ -694,11 +743,22 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                               style: TextStyle(
                                 color: cardStage == 'approved'
                                     ? c.success
-                                    : c.primaryDark,
+                                    : cardStage == 'error'
+                                        ? c.error
+                                        : c.primaryDark,
                                 fontWeight: FontWeight.w700,
                                 fontSize: 13.5,
                               ),
                             ),
+                            if (cardStage == 'error') ...<Widget>[
+                              const SizedBox(height: 10),
+                              OutlinedButton.icon(
+                                onPressed: () =>
+                                    triggerAutoSmartCardCheckout(),
+                                icon: const Icon(Icons.nfc_rounded, size: 16),
+                                label: const Text('Retry Tapat Card Tap'),
+                              ),
+                            ],
                             if (cardUid.isNotEmpty || cardId.isNotEmpty) ...<Widget>[
                               const SizedBox(height: 6),
                               Text(

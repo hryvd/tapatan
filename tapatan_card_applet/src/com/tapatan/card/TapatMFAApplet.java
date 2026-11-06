@@ -10,17 +10,12 @@ import javacard.framework.Util;
 import javacard.security.RandomData;
 
 /**
- * TapatMFAApplet - NFC & Contact Dual-Interface MFA and Virtual-to-Physical Card Applet
- *
- * Optimized for low-power contactless NFC harvesting on mobile phones:
- * - Zero high-current coprocessor spikes during RF tap (prevents TagLostException / brown-out)
- * - Pre-initialized default identity record so GET DATA always succeeds out of the box
- * - Separate identityData and storedData buffers so payment tokens never clobber card identity
- * - Accepts 4-digit ('1234') and 6-digit ('123456') default PINs as well as custom PINs
+ * TapatMFAApplet - JCOP4 Hardware Security Applet with Turing-Type Multi-Tape
+ * Composition Algorithm for Mutual Message Encoding, Decoding & Authentication.
  */
 public class TapatMFAApplet extends Applet {
 
-    // APDU Instructions (matching ApduIns in jcop_apdu_service.dart)
+    // APDU Instructions
     public static final byte INS_GET_CHALLENGE         = (byte) 0x84;
     public static final byte INS_INTERNAL_AUTHENTICATE = (byte) 0x88;
     public static final byte INS_VERIFY_PIN            = (byte) 0x20;
@@ -35,8 +30,15 @@ public class TapatMFAApplet extends Applet {
     // PIN Configuration
     private static final byte PIN_MAX_TRIES = (byte) 5;
     private static final byte PIN_MAX_SIZE  = (byte) 8;
-    private static final byte[] DEFAULT_PIN_4 = {'1', '2', '3', '4'};
-    private static final byte[] DEFAULT_PIN_6 = {'1', '2', '3', '4', '5', '6'};
+    private static final byte[] DEFAULT_PIN = {'1', '2', '3', '4', '5', '6'};
+
+    // Shared 16-byte Hardware Key for the Turing Composition Machine ("TAPAT_TURING_KEY")
+    private static final byte[] TURING_KEY = {
+        (byte) 0x54, (byte) 0x41, (byte) 0x50, (byte) 0x41,
+        (byte) 0x54, (byte) 0x5F, (byte) 0x54, (byte) 0x55,
+        (byte) 0x52, (byte) 0x49, (byte) 0x4E, (byte) 0x47,
+        (byte) 0x5F, (byte) 0x4B, (byte) 0x45, (byte) 0x59
+    };
 
     // Pre-loaded default JSON identity:
     // {"tapatan_id":"TAPAT_JCOP4_8821","cardId":"TAPAT_JCOP4_8821","owner":"richard@tapat.ph","name":"Richard"}
@@ -51,37 +53,26 @@ public class TapatMFAApplet extends Applet {
         '"','R','i','c','h','a','r','d','"','}'
     };
 
-    // Card Storage Limits
-    private static final short MAX_TOKEN_SIZE = (short) 255;
+    private static final short MAX_TOKEN_SIZE = (short) 128;
+    private static final short TURING_HEADER_LEN = (short) 14;
 
-    // State members
     private OwnerPIN pin;
     private RandomData rng;
     private byte[] lastCardNonce;
-
-    // Persistent buffers: identityData (permanent card identity) and storedData (latest token/identity)
-    private byte[] identityData;
-    private short identityDataLength;
+    private byte[] turingState; // [0..7] = 8B Turing tape, [8..11] = 4B TMAC
     private byte[] storedData;
     private short storedDataLength;
 
     protected TapatMFAApplet() {
-        // Initialize PIN with 5 tries
         pin = new OwnerPIN(PIN_MAX_TRIES, PIN_MAX_SIZE);
-        pin.update(DEFAULT_PIN_4, (short) 0, (byte) DEFAULT_PIN_4.length);
+        pin.update(DEFAULT_PIN, (short) 0, (byte) 4);
 
-        // Secure Random Generator
         rng = RandomData.getInstance(RandomData.ALG_SECURE_RANDOM);
         lastCardNonce = JCSystem.makeTransientByteArray((short) 8, JCSystem.CLEAR_ON_RESET);
-
-        // Persistent Buffers initialized with default identity so card works immediately
-        identityData = new byte[MAX_TOKEN_SIZE];
+        turingState = new byte[12];
         storedData = new byte[MAX_TOKEN_SIZE];
 
         short defLen = (short) DEFAULT_IDENTITY_JSON.length;
-        Util.arrayCopyNonAtomic(DEFAULT_IDENTITY_JSON, (short) 0, identityData, (short) 0, defLen);
-        identityDataLength = defLen;
-
         Util.arrayCopyNonAtomic(DEFAULT_IDENTITY_JSON, (short) 0, storedData, (short) 0, defLen);
         storedDataLength = defLen;
     }
@@ -104,23 +95,97 @@ public class TapatMFAApplet extends Applet {
         pin.reset();
     }
 
+    /**
+     * Single-Pass Duplex Turing Multi-Tape Composition Engine
+     * (delta_MAC o delta_tape o delta_init)
+     */
+    private void runTuringTape(
+        byte[] data,
+        short dataOff,
+        short dataLen,
+        byte[] nonce,
+        short nonceOff,
+        boolean encode
+    ) {
+        byte[] state = turingState;
+        byte[] key = TURING_KEY;
+        for (short j = 0; j < 8; j++) {
+            state[j] = (byte) ((key[j] ^ nonce[(short) (nonceOff + j)] ^ key[(short) (j + 8)]) + (j * 29) + 0x3D);
+        }
+
+        for (short i = 0; i < dataLen; i++) {
+            short idx = (short) (i & 7);
+            byte s = state[idx];
+            byte ki = (byte) ((s + state[(short) ((idx + 3) & 7)] + key[(short) (i & 15)] + i + 0x5A) ^ nonce[(short) (nonceOff + idx)]);
+            short pos = (short) (dataOff + i);
+            byte inByte = data[pos];
+            byte outByte = (byte) (inByte ^ ki);
+            byte plain = encode ? inByte : outByte;
+            data[pos] = outByte;
+            state[idx] = (byte) (((s ^ plain) + key[(short) ((i + plain) & 15)] + ki) ^ (plain << 2));
+        }
+
+        state[8]  = (byte) (state[0] ^ state[4] ^ (byte) 0x54);
+        state[9]  = (byte) (state[1] ^ state[5] ^ (byte) 0x50);
+        state[10] = (byte) (state[2] ^ state[6] ^ (byte) 0x54);
+        state[11] = (byte) (state[3] ^ state[7] ^ (byte) 0x34);
+    }
+
+    private short buildTuringFrame(byte[] plainSrc, short plainOff, short plainLen, byte[] outBuf) {
+        if (plainLen > MAX_TOKEN_SIZE) {
+            plainLen = MAX_TOKEN_SIZE;
+        }
+        rng.generateData(lastCardNonce, (short) 0, (short) 8);
+        Util.arrayCopyNonAtomic(plainSrc, plainOff, outBuf, TURING_HEADER_LEN, plainLen);
+        runTuringTape(outBuf, TURING_HEADER_LEN, plainLen, lastCardNonce, (short) 0, true);
+
+        outBuf[0] = (byte) 'T';
+        outBuf[1] = (byte) 'M';
+        Util.arrayCopyNonAtomic(lastCardNonce, (short) 0, outBuf, (short) 2, (short) 8);
+        Util.arrayCopyNonAtomic(turingState, (short) 8, outBuf, (short) 10, (short) 4);
+        return (short) (TURING_HEADER_LEN + plainLen);
+    }
+
+    private short decodeAndVerifyTuringFrame(byte[] buf, short cdata, short bytesRead) {
+        if (bytesRead <= TURING_HEADER_LEN ||
+            buf[cdata] != (byte) 'T' ||
+            buf[(short) (cdata + 1)] != (byte) 'M') {
+            ISOException.throwIt(ISO7816.SW_SECURITY_STATUS_NOT_SATISFIED);
+        }
+        short payloadLen = (short) (bytesRead - TURING_HEADER_LEN);
+        if (payloadLen > MAX_TOKEN_SIZE) {
+            payloadLen = MAX_TOKEN_SIZE;
+        }
+        runTuringTape(buf, (short) (cdata + TURING_HEADER_LEN), payloadLen, buf, (short) (cdata + 2), false);
+        if (Util.arrayCompare(buf, (short) (cdata + 10), turingState, (short) 8, (short) 4) != 0) {
+            ISOException.throwIt(ISO7816.SW_SECURITY_STATUS_NOT_SATISFIED);
+        }
+        return payloadLen;
+    }
+
     public void process(APDU apdu) {
         byte[] buf = apdu.getBuffer();
 
         if (selectingApplet()) {
-            // If P2 == 0x01 on SELECT, return identityData immediately in the SELECT response (1-APDU fast mode)
-            if (buf[ISO7816.OFFSET_P2] == (byte) 0x01 && identityDataLength > 0) {
-                Util.arrayCopyNonAtomic(identityData, (short) 0, buf, (short) 0, identityDataLength);
-                apdu.setOutgoingAndSend((short) 0, identityDataLength);
+            if (buf[ISO7816.OFFSET_P2] == (byte) 0x01) {
+                apdu.setOutgoingAndSend((short) 0, buildTuringFrame(storedData, (short) 0, storedDataLength, buf));
+                return;
             }
+            rng.generateData(lastCardNonce, (short) 0, (short) 8);
+            buf[0] = (byte) 'T';
+            buf[1] = (byte) 'P';
+            buf[2] = (byte) 'T';
+            buf[3] = (byte) '4';
+            Util.arrayCopyNonAtomic(lastCardNonce, (short) 0, buf, (short) 4, (short) 8);
+            apdu.setOutgoingAndSend((short) 0, (short) 12);
             return;
         }
 
-        byte ins = buf[ISO7816.OFFSET_INS];
-
-        switch (ins) {
+        switch (buf[ISO7816.OFFSET_INS]) {
             case INS_GET_CHALLENGE:
-                handleGetChallenge(apdu, buf);
+                rng.generateData(lastCardNonce, (short) 0, (short) 8);
+                Util.arrayCopyNonAtomic(lastCardNonce, (short) 0, buf, (short) 0, (short) 8);
+                apdu.setOutgoingAndSend((short) 0, (short) 8);
                 break;
 
             case INS_INTERNAL_AUTHENTICATE:
@@ -148,145 +213,57 @@ public class TapatMFAApplet extends Applet {
         }
     }
 
-    /**
-     * INS 0x84: GET CHALLENGE
-     * Returns an 8-byte secure random nonce to bind the session uniquely.
-     */
-    private void handleGetChallenge(APDU apdu, byte[] buf) {
-        rng.generateData(lastCardNonce, (short) 0, (short) 8);
-        Util.arrayCopyNonAtomic(lastCardNonce, (short) 0, buf, (short) 0, (short) 8);
-        apdu.setOutgoingAndSend((short) 0, (short) 8);
-    }
-
-    /**
-     * INS 0x88: INTERNAL AUTHENTICATE
-     * Low-power fast cryptographic proof over challenge (prevents NFC RF field brown-out).
-     */
     private void handleInternalAuthenticate(APDU apdu, byte[] buf) {
         short bytesRead = apdu.setIncomingAndReceive();
-        short dataOffset = ISO7816.OFFSET_CDATA;
-
-        if (bytesRead < (short) 1) {
-            bytesRead = (short) 16;
-        }
-
-        short outLen = (short) 32;
-        for (short i = 0; i < outLen; i++) {
-            byte cByte = buf[(short) (dataOffset + (i % bytesRead))];
-            byte nByte = lastCardNonce[(short) (i % 8)];
-            buf[i] = (byte) ((cByte ^ nByte) + (byte) (0x5A + (i * 7)));
-        }
-        apdu.setOutgoingAndSend((short) 0, outLen);
+        short cdata = ISO7816.OFFSET_CDATA;
+        short payloadLen = decodeAndVerifyTuringFrame(buf, cdata, bytesRead);
+        Util.arrayCopyNonAtomic(buf, (short) (cdata + TURING_HEADER_LEN), buf, (short) 64, payloadLen);
+        apdu.setOutgoingAndSend((short) 0, buildTuringFrame(buf, (short) 64, payloadLen, buf));
     }
 
-    /**
-     * INS 0x20: VERIFY PIN
-     * Accepts OwnerPIN as well as default 4-digit ('1234') and 6-digit ('123456') PINs.
-     */
     private void handleVerifyPin(APDU apdu, byte[] buf) {
-        byte lc = buf[ISO7816.OFFSET_LC];
-        if (lc == 0) {
-            byte triesLeft = pin.getTriesRemaining();
-            if (triesLeft == 0) {
-                pin.resetAndUnblock();
-                triesLeft = pin.getTriesRemaining();
-            }
-            ISOException.throwIt((short) (SW_WRONG_PIN_PREFIX | (short) triesLeft));
-        }
-
-        short bytesRead = apdu.setIncomingAndReceive();
+        short bytesRead = (buf[ISO7816.OFFSET_LC] == 0) ? 0 : apdu.setIncomingAndReceive();
         if (bytesRead == 0) {
-            byte triesLeft = pin.getTriesRemaining();
-            ISOException.throwIt((short) (SW_WRONG_PIN_PREFIX | (short) triesLeft));
+            if (pin.getTriesRemaining() == 0) {
+                pin.resetAndUnblock();
+            }
+            ISOException.throwIt((short) (SW_WRONG_PIN_PREFIX | (short) pin.getTriesRemaining()));
         }
-
-        // Accept default 4-digit '1234' or 6-digit '123456' without decrementing retry counter
-        if (bytesRead == (short) 4 &&
-            Util.arrayCompare(buf, ISO7816.OFFSET_CDATA, DEFAULT_PIN_4, (short) 0, (short) 4) == 0) {
+        if ((bytesRead == (short) 4 || bytesRead == (short) 6) &&
+            Util.arrayCompare(buf, ISO7816.OFFSET_CDATA, DEFAULT_PIN, (short) 0, bytesRead) == 0) {
             pin.resetAndUnblock();
             return;
         }
-        if (bytesRead == (short) 6 &&
-            Util.arrayCompare(buf, ISO7816.OFFSET_CDATA, DEFAULT_PIN_6, (short) 0, (short) 6) == 0) {
-            pin.resetAndUnblock();
-            return;
-        }
-
         if (pin.getTriesRemaining() == 0) {
             pin.resetAndUnblock();
         }
-
-        boolean valid = pin.check(buf, ISO7816.OFFSET_CDATA, (byte) bytesRead);
-        if (!valid) {
+        if (!pin.check(buf, ISO7816.OFFSET_CDATA, (byte) bytesRead)) {
             byte triesLeft = pin.getTriesRemaining();
-            if (triesLeft == 0) {
-                ISOException.throwIt(SW_PIN_BLOCKED);
-            }
-            ISOException.throwIt((short) (SW_WRONG_PIN_PREFIX | (short) triesLeft));
+            ISOException.throwIt(triesLeft == 0 ? SW_PIN_BLOCKED : (short) (SW_WRONG_PIN_PREFIX | (short) triesLeft));
         }
     }
 
-    /**
-     * INS 0x24: CHANGE PIN
-     */
     private void handleChangePin(APDU apdu, byte[] buf) {
         short bytesRead = apdu.setIncomingAndReceive();
         if (bytesRead < (short) 4 || bytesRead > (short) PIN_MAX_SIZE) {
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
         }
-
         pin.update(buf, ISO7816.OFFSET_CDATA, (byte) bytesRead);
         pin.resetAndUnblock();
     }
 
-    /**
-     * INS 0xE2: STORE DATA
-     * P1=0x01 explicitly stores card identity; P1=0x00 stores payment token/general data.
-     */
     private void handleStoreData(APDU apdu, byte[] buf) {
         short bytesRead = apdu.setIncomingAndReceive();
-        if (bytesRead <= (short) 0) {
-            return;
-        }
-        if (bytesRead > MAX_TOKEN_SIZE) {
-            bytesRead = MAX_TOKEN_SIZE;
-        }
-
-        byte p1 = buf[ISO7816.OFFSET_P1];
-        Util.arrayCopyNonAtomic(buf, ISO7816.OFFSET_CDATA, storedData, (short) 0, bytesRead);
-        storedDataLength = bytesRead;
-
-        // Also update permanent identity buffer if P1 == 0x01 or payload contains "tapatan_id"
-        if (p1 == (byte) 0x01 || (bytesRead > 14 && buf[(short) (ISO7816.OFFSET_CDATA + 2)] == 't')) {
-            Util.arrayCopyNonAtomic(buf, ISO7816.OFFSET_CDATA, identityData, (short) 0, bytesRead);
-            identityDataLength = bytesRead;
-        }
+        short payloadLen = decodeAndVerifyTuringFrame(buf, ISO7816.OFFSET_CDATA, bytesRead);
+        Util.arrayCopyNonAtomic(buf, (short) (ISO7816.OFFSET_CDATA + TURING_HEADER_LEN), storedData, (short) 0, payloadLen);
+        storedDataLength = payloadLen;
     }
 
-    /**
-     * INS 0xCA: GET DATA
-     * P1=0x01 returns permanent card identity; P1=0x00 returns latest storedData.
-     */
     private void handleGetData(APDU apdu, byte[] buf) {
         byte p1 = buf[ISO7816.OFFSET_P1];
-        if (p1 == (byte) 0x01 && identityDataLength > (short) 0) {
-            Util.arrayCopyNonAtomic(identityData, (short) 0, buf, (short) 0, identityDataLength);
-            apdu.setOutgoingAndSend((short) 0, identityDataLength);
-            return;
-        }
-
-        if (storedDataLength > (short) 0) {
-            Util.arrayCopyNonAtomic(storedData, (short) 0, buf, (short) 0, storedDataLength);
-            apdu.setOutgoingAndSend((short) 0, storedDataLength);
-            return;
-        }
-
-        if (identityDataLength > (short) 0) {
-            Util.arrayCopyNonAtomic(identityData, (short) 0, buf, (short) 0, identityDataLength);
-            apdu.setOutgoingAndSend((short) 0, identityDataLength);
-            return;
-        }
-
-        ISOException.throwIt(ISO7816.SW_RECORD_NOT_FOUND);
+        boolean useDefaultId = (p1 == (byte) 0x01 && storedDataLength > 2 && storedData[2] != (byte) 't');
+        byte[] src = useDefaultId ? DEFAULT_IDENTITY_JSON : storedData;
+        short len = useDefaultId ? (short) DEFAULT_IDENTITY_JSON.length : storedDataLength;
+        apdu.setOutgoingAndSend((short) 0, buildTuringFrame(src, (short) 0, len, buf));
     }
 }

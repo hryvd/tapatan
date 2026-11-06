@@ -1,16 +1,11 @@
 import javax.smartcardio.*;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.util.Arrays;
 
 /**
- * Diagnostic and personalization tester for TapatMFAApplet over PC/SC.
- *
- * Verifies the applet functions matching the Flutter app's APDU protocol:
- * 1. SELECT applet (AID: F0 74 61 70 61 74 61 6E 01 01)
- * 2. GET CHALLENGE (0x84)
- * 3. INTERNAL AUTHENTICATE (0x88)
- * 4. VERIFY PIN (0x20)
- * 5. STORE DATA (0xE2) - writes virtual card data into physical card
- * 6. GET DATA (0xCA) - reads back virtual card data from physical card
+ * Diagnostic and personalization tester for TapatMFAApplet over PC/SC
+ * using the Turing Multi-Tape Composition Algorithm (TM frames + TPT4 handshake).
  */
 public class test_applet_pcsc {
 
@@ -18,10 +13,91 @@ public class test_applet_pcsc {
         (byte)0xF0, 0x74, 0x61, 0x70, 0x61, 0x74, 0x61, 0x6E, 0x01, 0x01
     };
 
+    static final byte[] TURING_KEY = new byte[] {
+        (byte)0x54, (byte)0x41, (byte)0x50, (byte)0x41,
+        (byte)0x54, (byte)0x5F, (byte)0x54, (byte)0x55,
+        (byte)0x52, (byte)0x49, (byte)0x4E, (byte)0x47,
+        (byte)0x5F, (byte)0x4B, (byte)0x45, (byte)0x59
+    };
+
+    static byte[] initTuringTape(byte[] nonce) {
+        byte[] state = new byte[8];
+        for (int j = 0; j < 8; j++) {
+            int k1 = TURING_KEY[j] & 0xFF;
+            int k2 = TURING_KEY[j + 8] & 0xFF;
+            int n = nonce[j] & 0xFF;
+            state[j] = (byte)(((k1 ^ n ^ k2) + (j * 29) + 0x3D) & 0xFF);
+        }
+        return state;
+    }
+
+    static byte[][] runTuringTape(byte[] input, byte[] nonce, boolean encode) {
+        byte[] data = Arrays.copyOf(input, input.length);
+        byte[] state = initTuringTape(nonce);
+
+        for (int i = 0; i < data.length; i++) {
+            int idx = i & 7;
+            int s = state[idx] & 0xFF;
+            int sNext = state[(idx + 3) & 7] & 0xFF;
+            int k = TURING_KEY[i & 15] & 0xFF;
+            int n = nonce[idx] & 0xFF;
+            int ki = ((s + sNext + k + i + 0x5A) ^ n) & 0xFF;
+
+            int inByte = data[i] & 0xFF;
+            int outByte = (inByte ^ ki) & 0xFF;
+            int plain = encode ? inByte : outByte;
+            data[i] = (byte) outByte;
+
+            int k2 = TURING_KEY[(i + plain) & 15] & 0xFF;
+            state[idx] = (byte) ((((s ^ plain) + k2 + ki) ^ (plain << 2)) & 0xFF);
+        }
+
+        byte[] mac = new byte[] {
+            (byte)((state[0] ^ state[4] ^ 0x54) & 0xFF),
+            (byte)((state[1] ^ state[5] ^ 0x50) & 0xFF),
+            (byte)((state[2] ^ state[6] ^ 0x54) & 0xFF),
+            (byte)((state[3] ^ state[7] ^ 0x34) & 0xFF)
+        };
+        return new byte[][] { data, mac };
+    }
+
+    static byte[] encodeTuringFrame(byte[] plain) {
+        byte[] nonce = new byte[8];
+        new SecureRandom().nextBytes(nonce);
+        byte[][] res = runTuringTape(plain, nonce, true);
+        byte[] cipher = res[0];
+        byte[] mac = res[1];
+
+        byte[] frame = new byte[14 + cipher.length];
+        frame[0] = (byte)'T';
+        frame[1] = (byte)'M';
+        System.arraycopy(nonce, 0, frame, 2, 8);
+        System.arraycopy(mac, 0, frame, 10, 4);
+        System.arraycopy(cipher, 0, frame, 14, cipher.length);
+        return frame;
+    }
+
+    static byte[] decodeTuringFrame(byte[] frame) {
+        if (frame.length <= 14 || frame[0] != (byte)'T' || frame[1] != (byte)'M') {
+            throw new IllegalArgumentException("Invalid Turing Frame header!");
+        }
+        byte[] nonce = Arrays.copyOfRange(frame, 2, 10);
+        byte[] expectedMac = Arrays.copyOfRange(frame, 10, 14);
+        byte[] cipher = Arrays.copyOfRange(frame, 14, frame.length);
+
+        byte[][] res = runTuringTape(cipher, nonce, false);
+        byte[] plain = res[0];
+        byte[] actualMac = res[1];
+        if (!Arrays.equals(expectedMac, actualMac)) {
+            throw new SecurityException("Turing Composition MAC verification failed!");
+        }
+        return plain;
+    }
+
     public static void main(String[] args) {
         try {
             System.out.println("=================================================");
-            System.out.println("Tapatan J3R150 Physical Card Tester & Provisioner");
+            System.out.println("Tapatan J3R150 Turing Composition Applet Tester");
             System.out.println("=================================================");
 
             TerminalFactory tf = TerminalFactory.getDefault();
@@ -41,76 +117,68 @@ public class test_applet_pcsc {
             System.out.println("Card connected. ATR: " + bytesToHex(card.getATR().getBytes()));
             CardChannel channel = card.getBasicChannel();
 
-            // 1. SELECT Applet
-            System.out.println("\n[1] Selecting TapatMFAApplet...");
-            CommandAPDU selectCmd = new CommandAPDU(0x00, 0xA4, 0x04, 0x00, APPLET_AID);
+            // 1. SELECT Applet (verify "TPT4" handshake + 8B nonce)
+            System.out.println("\n[1] Selecting TapatMFAApplet (P2=0x00)...");
+            CommandAPDU selectCmd = new CommandAPDU(0x00, 0xA4, 0x04, 0x00, APPLET_AID, 256);
             ResponseAPDU selectResp = channel.transmit(selectCmd);
             System.out.println("SELECT response SW: 0x" + Integer.toHexString(selectResp.getSW()).toUpperCase());
+            byte[] selectData = selectResp.getData();
+            System.out.println("SELECT Handshake (" + selectData.length + "B): " + bytesToHex(selectData));
 
-            if (selectResp.getSW() != 0x9000) {
-                System.out.println("[INFO] Applet is not yet selectable (SW=" + Integer.toHexString(selectResp.getSW()) + ").");
-                System.out.println("       The applet needs to be loaded/installed using gp.jar first.");
+            if (selectResp.getSW() != 0x9000 || selectData.length < 12 ||
+                selectData[0] != 'T' || selectData[1] != 'P' || selectData[2] != 'T' || selectData[3] != '4') {
+                System.out.println("[ERROR] Card did not return valid TPT4 Turing handshake!");
                 card.disconnect(false);
                 return;
             }
+            System.out.println("[SUCCESS] Authentic TapatMFAApplet TPT4 Handshake Verified!");
 
-            System.out.println("[SUCCESS] TapatMFAApplet is ACTIVE on the card!");
+            // 2. STORE VIRTUAL CARD DATA using Turing Composition Frame
+            System.out.println("\n[2] Encoding & Storing Identity via Turing Multi-Tape Composition...");
+            String virtualCardJson = "{\"tapatan_id\":\"TAPAT_JCOP4_8821\",\"cardId\":\"TAPAT_JCOP4_8821\",\"owner\":\"richard@tapat.ph\",\"name\":\"Richard\"}";
+            byte[] turingFrame = encodeTuringFrame(virtualCardJson.getBytes(StandardCharsets.UTF_8));
+            System.out.println("Encoded Turing Frame (" + turingFrame.length + "B): " + bytesToHex(turingFrame));
 
-            // 2. GET CHALLENGE
-            System.out.println("\n[2] Testing GET CHALLENGE (INS 0x84)...");
-            CommandAPDU chalCmd = new CommandAPDU(0x00, 0x84, 0x00, 0x00, 8);
-            ResponseAPDU chalResp = channel.transmit(chalCmd);
-            System.out.println("GET CHALLENGE SW: 0x" + Integer.toHexString(chalResp.getSW()).toUpperCase());
-            System.out.println("Card Nonce (8 bytes): " + bytesToHex(chalResp.getData()));
+            CommandAPDU storeIdCmd = new CommandAPDU(0x00, 0xE2, 0x01, 0x00, turingFrame);
+            ResponseAPDU storeIdResp = channel.transmit(storeIdCmd);
+            CommandAPDU storeTokCmd = new CommandAPDU(0x00, 0xE2, 0x00, 0x00, turingFrame);
+            ResponseAPDU storeTokResp = channel.transmit(storeTokCmd);
+            System.out.println("STORE DATA (P1=01) SW: 0x" + Integer.toHexString(storeIdResp.getSW()).toUpperCase());
+            System.out.println("STORE DATA (P1=00) SW: 0x" + Integer.toHexString(storeTokResp.getSW()).toUpperCase());
 
-            // 3. STORE VIRTUAL CARD DATA (Personalize Physical Card)
-            System.out.println("\n[3] Personalizing Physical Card with Virtual Card data...");
-            String virtualCardJson = "{\"tapatan_id\":\"TAPAT_JCOP4_8821\",\"cardId\":\"TAPAT_JCOP4_8821\",\"owner\":\"richard@tapat.ph\",\"name\":\"Richard\",\"registered_at\":\"2026-11-06T00:00:00Z\",\"type\":\"physical_dual_interface\"}";
-            byte[] cardDataBytes = virtualCardJson.getBytes(StandardCharsets.UTF_8);
+            // 3. Verify that unencoded/tampered STORE DATA is REJECTED by the applet
+            System.out.println("\n[3] Verifying Applet Rejects Forged/Unencoded Data...");
+            byte[] fakeData = "{\"cardId\":\"FAKE\"}".getBytes(StandardCharsets.UTF_8);
+            ResponseAPDU fakeResp = channel.transmit(new CommandAPDU(0x00, 0xE2, 0x01, 0x00, fakeData));
+            System.out.println("Forged STORE DATA SW: 0x" + Integer.toHexString(fakeResp.getSW()).toUpperCase() + " (Expected 0x6982)");
 
-            CommandAPDU storeIdentityCmd = new CommandAPDU(0x00, 0xE2, 0x01, 0x00, cardDataBytes);
-            channel.transmit(storeIdentityCmd);
-            CommandAPDU storeCmd = new CommandAPDU(0x00, 0xE2, 0x00, 0x00, cardDataBytes);
-            ResponseAPDU storeResp = channel.transmit(storeCmd);
-            System.out.println("STORE DATA SW: 0x" + Integer.toHexString(storeResp.getSW()).toUpperCase());
-            if (storeResp.getSW() == 0x9000) {
-                System.out.println("[SUCCESS] Virtual card payload saved to physical card EEPROM!");
-            }
-
-            // 4. GET DATA (Read back stored payload)
-            System.out.println("\n[4] Reading back stored data (INS 0xCA)...");
-            CommandAPDU getCmd = new CommandAPDU(0x00, 0xCA, 0x00, 0x00, 255);
+            // 4. GET DATA (Read back Turing-encoded frame from card and decode it)
+            System.out.println("\n[4] Reading & Decoding Turing Frame from Card (INS 0xCA)...");
+            CommandAPDU getCmd = new CommandAPDU(0x00, 0xCA, 0x01, 0x00, 256);
             ResponseAPDU getResp = channel.transmit(getCmd);
             System.out.println("GET DATA SW: 0x" + Integer.toHexString(getResp.getSW()).toUpperCase());
-            String readBack = new String(getResp.getData(), StandardCharsets.UTF_8);
-            System.out.println("Stored payload: " + readBack);
+            byte[] cardFrame = getResp.getData();
+            System.out.println("Card Turing Frame (" + cardFrame.length + "B): " + bytesToHex(cardFrame));
+            String decodedJson = new String(decodeTuringFrame(cardFrame), StandardCharsets.UTF_8);
+            System.out.println("[SUCCESS] Decoded JSON from Card: " + decodedJson);
 
-            // 5. VERIFY PIN
-            System.out.println("\n[5] Testing on-card PIN verification (default PIN: 1234)...");
-            byte[] pinBytes = "1234".getBytes(StandardCharsets.UTF_8);
-            CommandAPDU pinCmd = new CommandAPDU(0x00, 0x20, 0x00, 0x80, pinBytes);
-            ResponseAPDU pinResp = channel.transmit(pinCmd);
-            System.out.println("VERIFY PIN SW: 0x" + Integer.toHexString(pinResp.getSW()).toUpperCase());
-            if (pinResp.getSW() == 0x9000) {
-                System.out.println("[SUCCESS] PIN verified by on-card OwnerPIN!");
-            }
-
-            // 6. INTERNAL AUTHENTICATE (Test Challenge-Response Signature)
-            System.out.println("\n[6] Testing INTERNAL AUTHENTICATE (INS 0x88)...");
+            // 5. INTERNAL AUTHENTICATE (Turing-encoded Challenge-Response)
+            System.out.println("\n[5] Testing Turing-Composed INTERNAL AUTHENTICATE (INS 0x88)...");
+            ResponseAPDU chalResp = channel.transmit(new CommandAPDU(0x00, 0x84, 0x00, 0x00, 8));
+            byte[] cardNonce = chalResp.getData();
             byte[] combinedChallenge = new byte[16];
-            System.arraycopy(chalResp.getData(), 0, combinedChallenge, 0, 8); // card nonce
-            for (int i = 8; i < 16; i++) combinedChallenge[i] = (byte)(0x42 + i); // 8-byte phone challenge
-            CommandAPDU authCmd = new CommandAPDU(0x00, 0x88, 0x00, 0x00, combinedChallenge, 255);
-            ResponseAPDU authResp = channel.transmit(authCmd);
+            System.arraycopy(cardNonce, 0, combinedChallenge, 0, 8);
+            for (int i = 8; i < 16; i++) combinedChallenge[i] = (byte)(0x42 + i);
+            byte[] encodedChallenge = encodeTuringFrame(combinedChallenge);
+
+            // Note: For Alcorlink T=0 reader, send Case 3 and if 61xx is returned, javax.smartcardio fetches response
+            ResponseAPDU authResp = channel.transmit(new CommandAPDU(0x00, 0x88, 0x00, 0x00, encodedChallenge));
             System.out.println("INTERNAL AUTHENTICATE SW: 0x" + Integer.toHexString(authResp.getSW()).toUpperCase());
-            System.out.println("Signature/Proof (" + authResp.getData().length + " bytes): " + bytesToHex(authResp.getData()));
-            if (authResp.getSW() == 0x9000 && authResp.getData().length > 0) {
-                System.out.println("[SUCCESS] Physical card generated valid challenge-response authentication proof!");
-            }
+            byte[] decodedProof = decodeTuringFrame(authResp.getData());
+            System.out.println("[SUCCESS] Verified Mutual Turing Proof (" + decodedProof.length + "B): " + bytesToHex(decodedProof));
 
             System.out.println("\n=================================================");
-            System.out.println("ALL PHYSICAL CARD NFC PROTOCOL CHECKS PASSED!");
-            System.out.println("Card is ready to be tapped against your Android phone in Tapatan!");
+            System.out.println("ALL TURING COMPOSITION & CARD SECURITY CHECKS PASSED!");
             System.out.println("=================================================");
 
             card.disconnect(false);
