@@ -494,7 +494,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                   start5SecDialogRetry();
                 }
               }
-            };
+            }
 
             if (!listenerInitialized) {
               listenerInitialized = true;

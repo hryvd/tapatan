@@ -12,7 +12,6 @@ env/
 # Build and cache directories
 build/
 **/build/
-builds/
 dist/
 *.pyc
 __pycache__/
@@ -51,4 +50,5 @@ node_modules/
 
 # Large files
 *.apk
+!builds/*.apk
 *.aab
