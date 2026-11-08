@@ -1,5 +1,5 @@
 // converted by version  [v3.0.5]
-// on Fri Nov 06 14:00:04 PST 2026
+// on Sun Nov 08 10:33:34 PST 2026
 
 .package com/tapatan/card {
 	.aid 0xF0:0x74:0x61:0x70:0x61:0x74:0x61:0x6E;
@@ -129,7 +129,7 @@
 			private static final byte PIN_MAX_SIZE = 8;		// B
 			private static final byte[] DEFAULT_PIN = {49,50,51,52,53,54};		// [B
 			private static final byte[] TURING_KEY = {84,65,80,65,84,95,84,85,82,73,78,71,95,75,69,89};		// [B
-			private static final byte[] DEFAULT_IDENTITY_JSON = {123,34,116,97,112,97,116,97,110,95,105,100,34,58,34,84,65,80,65,84,95,74,67,79,80,52,95,56,56,50,49,34,44,34,99,97,114,100,73,100,34,58,34,84,65,80,65,84,95,74,67,79,80,52,95,56,56,50,49,34,44,34,111,119,110,101,114,34,58,34,114,105,99,104,97,114,100,64,116,97,112,97,116,46,112,104,34,44,34,110,97,109,101,34,58,34,82,105,99,104,97,114,100,34,125};		// [B
+			private static final byte[] DEFAULT_IDENTITY_JSON = {123,34,116,97,112,97,116,97,110,95,105,100,34,58,34,84,65,80,65,84,95,74,67,79,80,52,95,56,56,50,49,34,44,34,99,97,114,100,73,100,34,58,34,84,65,80,65,84,95,74,67,79,80,52,95,56,56,50,49,34,44,34,111,119,110,101,114,34,58,34,34,44,34,110,97,109,101,34,58,34,34,125};		// [B
 			private static final short MAX_TOKEN_SIZE = 128;		// S
 			private static final short TURING_HEADER_LEN = 14;		// S
 		}
@@ -535,7 +535,7 @@
 
 		.method public process(Ljavacard/framework/APDU;)V 7 {
 			.stack 7;
-			.locals 1;
+			.locals 4;
 
 			.descriptor	Ljavacard/framework/APDU;	0.10;
 
@@ -544,23 +544,48 @@
 					astore_2;
 					aload_0;
 					invokevirtual 26;		// selectingApplet()Z
-					ifeq L4;
+					ifeq L14;
 				L1:	aload_2;
 					sconst_3;
 					baload;
 					sconst_1;
-					if_scmpne L3;
-				L2:	aload_1;
+					if_scmpne L13;
+				L2:	getfield_s_this 5;		// short com/tapatan/card/TapatMFAApplet.storedDataLength
+					sconst_2;
+					if_scmple L5;
+				L3:	getfield_a_this 4;		// reference com/tapatan/card/TapatMFAApplet.storedData
+					sconst_2;
+					baload;
+					bspush 116;
+					if_scmpeq L5;
+				L4:	sconst_1;
+					goto L6;
+				L5:	sconst_0;
+				L6:	sstore_3;
+					sload_3;
+					ifeq L8;
+				L7:	getstatic_a 12;		// reference com/tapatan/card/TapatMFAApplet.DEFAULT_IDENTITY_JSON
+					goto L9;
+				L8:	getfield_a_this 4;		// reference com/tapatan/card/TapatMFAApplet.storedData
+				L9:	astore 4;
+					sload_3;
+					ifeq L11;
+				L10:	getstatic_a 12;		// reference com/tapatan/card/TapatMFAApplet.DEFAULT_IDENTITY_JSON
+					arraylength;
+					goto L12;
+				L11:	getfield_s_this 5;		// short com/tapatan/card/TapatMFAApplet.storedDataLength
+				L12:	sstore 5;
+					aload_1;
 					sconst_0;
 					aload_0;
-					getfield_a_this 4;		// reference com/tapatan/card/TapatMFAApplet.storedData
+					aload 4;
 					sconst_0;
-					getfield_s_this 5;		// short com/tapatan/card/TapatMFAApplet.storedDataLength
+					sload 5;
 					aload_2;
 					invokespecial 27;		// com/tapatan/card/TapatMFAApplet.buildTuringFrame([BSS[B)S
 					invokevirtual 28;		// setOutgoingAndSend(SS)V
 					return;
-				L3:	getfield_a_this 1;		// reference com/tapatan/card/TapatMFAApplet.rng
+				L13:	getfield_a_this 1;		// reference com/tapatan/card/TapatMFAApplet.rng
 					getfield_a_this 2;		// reference com/tapatan/card/TapatMFAApplet.lastCardNonce
 					sconst_0;
 					bspush 8;
@@ -593,11 +618,11 @@
 					bspush 12;
 					invokevirtual 28;		// setOutgoingAndSend(SS)V
 					return;
-				L4:	aload_2;
+				L14:	aload_2;
 					sconst_1;
 					baload;
-					slookupswitch L11 6 -124 L5 -120 L6 -54 L10 -30 L9 32 L7 36 L8;
-				L5:	getfield_a_this 1;		// reference com/tapatan/card/TapatMFAApplet.rng
+					slookupswitch L21 6 -124 L15 -120 L16 -54 L20 -30 L19 32 L17 36 L18;
+				L15:	getfield_a_this 1;		// reference com/tapatan/card/TapatMFAApplet.rng
 					getfield_a_this 2;		// reference com/tapatan/card/TapatMFAApplet.lastCardNonce
 					sconst_0;
 					bspush 8;
@@ -613,35 +638,35 @@
 					sconst_0;
 					bspush 8;
 					invokevirtual 28;		// setOutgoingAndSend(SS)V
-					goto L12;
-				L6:	aload_0;
+					goto L22;
+				L16:	aload_0;
 					aload_1;
 					aload_2;
 					invokespecial 29;		// com/tapatan/card/TapatMFAApplet.handleInternalAuthenticate(Ljavacard/framework/APDU;[B)V
-					goto L12;
-				L7:	aload_0;
+					goto L22;
+				L17:	aload_0;
 					aload_1;
 					aload_2;
 					invokespecial 30;		// com/tapatan/card/TapatMFAApplet.handleVerifyPin(Ljavacard/framework/APDU;[B)V
-					goto L12;
-				L8:	aload_0;
+					goto L22;
+				L18:	aload_0;
 					aload_1;
 					aload_2;
 					invokespecial 31;		// com/tapatan/card/TapatMFAApplet.handleChangePin(Ljavacard/framework/APDU;[B)V
-					goto L12;
-				L9:	aload_0;
+					goto L22;
+				L19:	aload_0;
 					aload_1;
 					aload_2;
 					invokespecial 32;		// com/tapatan/card/TapatMFAApplet.handleStoreData(Ljavacard/framework/APDU;[B)V
-					goto L12;
-				L10:	aload_0;
+					goto L22;
+				L20:	aload_0;
 					aload_1;
 					aload_2;
 					invokespecial 33;		// com/tapatan/card/TapatMFAApplet.handleGetData(Ljavacard/framework/APDU;[B)V
-					goto L12;
-				L11:	sspush 27904;
+					goto L22;
+				L21:	sspush 27904;
 					invokestatic 23;		// javacard/framework/ISOException.throwIt(S)V
-				L12:	return;
+				L22:	return;
 		}
 
 		.method private handleInternalAuthenticate(Ljavacard/framework/APDU;[B)V {

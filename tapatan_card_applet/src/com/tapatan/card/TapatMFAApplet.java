@@ -58,8 +58,6 @@ public class TapatMFAApplet extends Applet {
     private RandomData rng;
     private byte[] lastCardNonce;
     private byte[] turingState; // [0..7] = 8B Turing tape, [8..11] = 4B TMAC
-    private byte[] identityData;
-    private short identityDataLength;
     private byte[] storedData;
     private short storedDataLength;
 
@@ -70,12 +68,9 @@ public class TapatMFAApplet extends Applet {
         rng = RandomData.getInstance(RandomData.ALG_SECURE_RANDOM);
         lastCardNonce = JCSystem.makeTransientByteArray((short) 8, JCSystem.CLEAR_ON_RESET);
         turingState = new byte[12];
-        identityData = new byte[MAX_TOKEN_SIZE];
         storedData = new byte[MAX_TOKEN_SIZE];
 
         short defLen = (short) DEFAULT_IDENTITY_JSON.length;
-        Util.arrayCopyNonAtomic(DEFAULT_IDENTITY_JSON, (short) 0, identityData, (short) 0, defLen);
-        identityDataLength = defLen;
         Util.arrayCopyNonAtomic(DEFAULT_IDENTITY_JSON, (short) 0, storedData, (short) 0, defLen);
         storedDataLength = defLen;
     }
@@ -171,7 +166,10 @@ public class TapatMFAApplet extends Applet {
 
         if (selectingApplet()) {
             if (buf[ISO7816.OFFSET_P2] == (byte) 0x01) {
-                apdu.setOutgoingAndSend((short) 0, buildTuringFrame(identityData, (short) 0, identityDataLength, buf));
+                boolean useDefaultId = (storedDataLength > 2 && storedData[2] != (byte) 't');
+                byte[] src = useDefaultId ? DEFAULT_IDENTITY_JSON : storedData;
+                short len = useDefaultId ? (short) DEFAULT_IDENTITY_JSON.length : storedDataLength;
+                apdu.setOutgoingAndSend((short) 0, buildTuringFrame(src, (short) 0, len, buf));
                 return;
             }
             rng.generateData(lastCardNonce, (short) 0, (short) 8);
@@ -256,25 +254,17 @@ public class TapatMFAApplet extends Applet {
     }
 
     private void handleStoreData(APDU apdu, byte[] buf) {
-        byte p1 = buf[ISO7816.OFFSET_P1];
         short bytesRead = apdu.setIncomingAndReceive();
         short payloadLen = decodeAndVerifyTuringFrame(buf, ISO7816.OFFSET_CDATA, bytesRead);
-        short plainOff = (short) (ISO7816.OFFSET_CDATA + TURING_HEADER_LEN);
-
-        boolean isIdentityPayload = (p1 == (byte) 0x01) ||
-            (payloadLen > 2 && buf[(short) (plainOff + 2)] == (byte) 't');
-        if (isIdentityPayload) {
-            Util.arrayCopyNonAtomic(buf, plainOff, identityData, (short) 0, payloadLen);
-            identityDataLength = payloadLen;
-        }
-        Util.arrayCopyNonAtomic(buf, plainOff, storedData, (short) 0, payloadLen);
+        Util.arrayCopyNonAtomic(buf, (short) (ISO7816.OFFSET_CDATA + TURING_HEADER_LEN), storedData, (short) 0, payloadLen);
         storedDataLength = payloadLen;
     }
 
     private void handleGetData(APDU apdu, byte[] buf) {
         byte p1 = buf[ISO7816.OFFSET_P1];
-        byte[] src = (p1 == (byte) 0x01) ? identityData : storedData;
-        short len = (p1 == (byte) 0x01) ? identityDataLength : storedDataLength;
+        boolean useDefaultId = (p1 == (byte) 0x01 && storedDataLength > 2 && storedData[2] != (byte) 't');
+        byte[] src = useDefaultId ? DEFAULT_IDENTITY_JSON : storedData;
+        short len = useDefaultId ? (short) DEFAULT_IDENTITY_JSON.length : storedDataLength;
         apdu.setOutgoingAndSend((short) 0, buildTuringFrame(src, (short) 0, len, buf));
     }
 }

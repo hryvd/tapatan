@@ -133,9 +133,9 @@ public class test_applet_pcsc {
             }
             System.out.println("[SUCCESS] Authentic TapatMFAApplet TPT4 Handshake Verified!");
 
-            // 2. STORE VIRTUAL CARD DATA using Turing Composition Frame
-            System.out.println("\n[2] Encoding & Storing Identity via Turing Multi-Tape Composition...");
-            String virtualCardJson = "{\"tapatan_id\":\"TAPAT_JCOP4_8821\",\"cardId\":\"TAPAT_JCOP4_8821\",\"owner\":\"richard@tapat.ph\",\"name\":\"Richard\"}";
+            // 2. STORE UNPROVISIONED FACTORY IDENTITY (no hardcoded personal name)
+            System.out.println("\n[2] Encoding & Storing Clean Factory Identity via Turing Multi-Tape Composition...");
+            String virtualCardJson = "{\"tapatan_id\":\"TAPAT_JCOP4_8821\",\"cardId\":\"TAPAT_JCOP4_8821\",\"owner\":\"\",\"name\":\"\"}";
             byte[] turingFrame = encodeTuringFrame(virtualCardJson.getBytes(StandardCharsets.UTF_8));
             System.out.println("Encoded Turing Frame (" + turingFrame.length + "B): " + bytesToHex(turingFrame));
 
