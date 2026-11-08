@@ -239,7 +239,7 @@ class _JcopTapOverlayState extends State<JcopTapOverlay>
                     if (!isSuccess && !isError)
                       AnimatedBuilder(
                         animation: _rippleAnim,
-                        builder: (_, _) => Container(
+                        builder: (context, child) => Container(
                           width: 160 * _rippleAnim.value,
                           height: 160 * _rippleAnim.value,
                           decoration: BoxDecoration(
@@ -258,7 +258,7 @@ class _JcopTapOverlayState extends State<JcopTapOverlay>
                     // Outer glow ring
                     AnimatedBuilder(
                       animation: _pulseAnim,
-                      builder: (_, _) => Transform.scale(
+                      builder: (context, child) => Transform.scale(
                         scale: isSuccess || isError ? 1.0 : _pulseAnim.value,
                         child: Container(
                           width: 120,

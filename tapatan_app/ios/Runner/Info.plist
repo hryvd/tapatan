@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Secure Nfc Pay</string>
+	<string>tap@tan</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -66,5 +66,25 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NFCReaderUsageDescription</key>
+	<string>tap@tan uses NFC to communicate securely with your Tapat JCOP4 Java Card for Turing Composition authentication and tokenized payments.</string>
+	<key>com.apple.developer.nfc.readersession.iso7816.select-identifiers</key>
+	<array>
+		<string>F07461706174616E0101</string>
+		<string>A000000151000000</string>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>tap@tan uses the front camera for Face Liveness verification during KYC identity onboarding.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>tap@tan does not record audio; camera access is used strictly for visual Face Liveness verification.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>tap@tan connects to your configurable Tapat Account Backend on your local network when remote account sync is enabled.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

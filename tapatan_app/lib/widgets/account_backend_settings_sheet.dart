@@ -235,7 +235,7 @@ class _AccountBackendSettingsSheetState
                                     color: Colors.white, fontSize: 13.5),
                                 decoration: InputDecoration(
                                   hintText:
-                                      'http://192.168.1.100:4000 (or 10.0.2.2:4000)',
+                                      'http://192.168.1.100:4180 (or 127.0.0.1:4180 / 10.0.2.2:4180)',
                                   hintStyle: TextStyle(
                                     color: Colors.white.withValues(alpha: 0.3),
                                     fontSize: 12.5,

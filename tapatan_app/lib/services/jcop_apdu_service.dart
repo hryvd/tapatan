@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:nfc_manager/nfc_manager.dart';
 import 'package:nfc_manager/nfc_manager_android.dart';
+import 'package:nfc_manager/nfc_manager_ios.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'turing_composition_cipher.dart';
@@ -84,9 +86,48 @@ class ApduIns {
 /// Turing Multi-Tape State-Transition Composition Algorithm.
 /// Any non-Tapat NFC card or unauthenticated response is strictly rejected.
 class JcopApduService {
+  static const String kTapatanAppletAidHex = 'F07461706174616E0101';
+
+  /// Returns true if [tag] exposes an ISO 7816-4 / ISO-DEP APDU transport
+  /// on either Android (`IsoDepAndroid`) or iOS (`Iso7816Ios` / `MiFareIos`).
+  static bool isIso7816SupportedTag(NfcTag tag) {
+    try {
+      if (Platform.isAndroid) {
+        return IsoDepAndroid.from(tag) != null;
+      }
+      if (Platform.isIOS) {
+        return Iso7816Ios.from(tag) != null || MiFareIos.from(tag) != null;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// Sets the APDU transport timeout where supported (Android `IsoDep`).
+  static Future<void> configureTagTimeout(
+    NfcTag tag, {
+    int timeoutMs = 5000,
+  }) async {
+    try {
+      if (Platform.isAndroid) {
+        final isoDep = IsoDepAndroid.from(tag);
+        if (isoDep != null) {
+          await isoDep.setTimeout(timeoutMs);
+        }
+      }
+    } catch (_) {}
+  }
+
+  /// Converts an optional ISO 7816-4 `Le` byte to CoreNFC's `expectedResponseLength`
+  /// (`-1` when omitted, `256` when `Le == 0x00`, or `1..255`).
+  static int coreNfcExpectedResponseLength(int? le) {
+    if (le == null) return -1;
+    if (le == 0) return 256;
+    return le;
+  }
+
   // ── NFC Session Management ───────────────────────────────────────────────
 
-  /// Polls for an ISO-DEP smart card (ISO 14443-4).
+  /// Polls for an ISO-DEP / ISO-7816 smart card (ISO 14443-4) on Android & iOS.
   static Future<Map<String, dynamic>> pollForTag({
     int timeoutSeconds = 20,
     void Function(String step)? onProgress,
@@ -102,20 +143,35 @@ class JcopApduService {
     }
 
     final completer = Completer<Map<String, dynamic>>();
+    bool tagHandled = false;
 
     try {
       await NfcManager.instance.startSession(
         pollingOptions: {
           NfcPollingOption.iso14443,
         },
+        alertMessageIos:
+            'Hold the top of your iPhone near your Tapat JCOP4 Smart Card.',
+        onSessionErrorIos: (NfcReaderSessionErrorIos error) {
+          if (!tagHandled && !completer.isCompleted) {
+            completer.complete({
+              'success': false,
+              'cancelled': true,
+              'error': error.message.isNotEmpty
+                  ? error.message
+                  : 'NFC session cancelled.',
+            });
+          }
+        },
         onDiscovered: (NfcTag tag) async {
+          if (tagHandled || completer.isCompleted) return;
+          tagHandled = true;
           onProgress?.call('Tag detected — verifying Tapat JCOP4 applet...');
 
-          final isoDep = IsoDepAndroid.from(tag);
-          if (isoDep == null) {
+          if (!isIso7816SupportedTag(tag)) {
             await stopSession(
               errorMessage:
-                  'Unauthorized card: Not an ISO-DEP smart card.',
+                  'Unauthorized card: Not an ISO-7816 / ISO-DEP smart card.',
             );
             if (!completer.isCompleted) {
               completer.complete({
@@ -128,9 +184,7 @@ class JcopApduService {
             return;
           }
 
-          try {
-            await isoDep.setTimeout(5000);
-          } catch (_) {}
+          await configureTagTimeout(tag, timeoutMs: 5000);
 
           if (!completer.isCompleted) {
             completer.complete({
@@ -149,7 +203,8 @@ class JcopApduService {
           );
           completer.complete({
             'success': false,
-            'error': 'No Tapat JCOP4 card detected — hold card steady and try again',
+            'error':
+                'No Tapat JCOP4 card detected — hold card steady and try again',
           });
         }
       });
@@ -163,9 +218,15 @@ class JcopApduService {
   }
 
   /// Stops the active NFC session cleanly.
-  static Future<void> stopSession({String? errorMessage}) async {
+  static Future<void> stopSession({
+    String? alertMessage,
+    String? errorMessage,
+  }) async {
     try {
-      await NfcManager.instance.stopSession(errorMessageIos: errorMessage);
+      await NfcManager.instance.stopSession(
+        alertMessageIos: alertMessage,
+        errorMessageIos: errorMessage,
+      );
     } catch (_) {}
   }
 
@@ -180,47 +241,90 @@ class JcopApduService {
     List<int> data = const [],
     int? le,
   }) async {
-    final isoDep = IsoDepAndroid.from(tag);
-    if (isoDep == null) {
-      throw StateError('Tag is not an ISO-DEP smart card');
+    if (Platform.isAndroid) {
+      final isoDep = IsoDepAndroid.from(tag);
+      if (isoDep == null) {
+        throw StateError('Tag is not an ISO-DEP smart card');
+      }
+
+      final List<int> apdu = [cla, ins, p1, p2];
+      if (data.isNotEmpty) {
+        apdu.add(data.length); // Lc
+        apdu.addAll(data);
+      }
+      if (le != null) {
+        apdu.add(le); // Le
+      }
+
+      final responseBytes = await isoDep.transceive(Uint8List.fromList(apdu));
+
+      if (responseBytes.length < 2) {
+        throw StateError(
+            'APDU response too short (${responseBytes.length} bytes)');
+      }
+
+      final sw1 = responseBytes[responseBytes.length - 2];
+      final sw2 = responseBytes[responseBytes.length - 1];
+      final responseData = responseBytes.sublist(0, responseBytes.length - 2);
+
+      return ApduResponse(
+        data: Uint8List.fromList(responseData),
+        statusWord: (sw1 << 8) | sw2,
+      );
     }
 
-    final List<int> apdu = [cla, ins, p1, p2];
-    if (data.isNotEmpty) {
-      apdu.add(data.length); // Lc
-      apdu.addAll(data);
+    if (Platform.isIOS) {
+      final expectedLen = coreNfcExpectedResponseLength(le);
+      final payloadBytes = Uint8List.fromList(data);
+
+      final iso7816 = Iso7816Ios.from(tag);
+      if (iso7816 != null) {
+        final res = await iso7816.sendCommand(
+          instructionClass: cla & 0xFF,
+          instructionCode: ins & 0xFF,
+          p1Parameter: p1 & 0xFF,
+          p2Parameter: p2 & 0xFF,
+          data: payloadBytes,
+          expectedResponseLength: expectedLen,
+        );
+        return ApduResponse(
+          data: res.payload,
+          statusWord: ((res.statusWord1 & 0xFF) << 8) | (res.statusWord2 & 0xFF),
+        );
+      }
+
+      final mifare = MiFareIos.from(tag);
+      if (mifare != null) {
+        final res = await mifare.sendMiFareIso7816Command(
+          instructionClass: cla & 0xFF,
+          instructionCode: ins & 0xFF,
+          p1Parameter: p1 & 0xFF,
+          p2Parameter: p2 & 0xFF,
+          data: payloadBytes,
+          expectedResponseLength: expectedLen,
+        );
+        return ApduResponse(
+          data: res.payload,
+          statusWord: ((res.statusWord1 & 0xFF) << 8) | (res.statusWord2 & 0xFF),
+        );
+      }
     }
-    if (le != null) {
-      apdu.add(le); // Le
-    }
 
-    final responseBytes = await isoDep.transceive(Uint8List.fromList(apdu));
-
-    if (responseBytes.length < 2) {
-      throw StateError(
-          'APDU response too short (${responseBytes.length} bytes)');
-    }
-
-    final sw1 = responseBytes[responseBytes.length - 2];
-    final sw2 = responseBytes[responseBytes.length - 1];
-    final responseData = responseBytes.sublist(0, responseBytes.length - 2);
-
-    return ApduResponse(
-      data: Uint8List.fromList(responseData),
-      statusWord: (sw1 << 8) | sw2,
-    );
+    throw StateError('Tag is not an ISO-7816 / ISO-DEP smart card');
   }
 
   // ── Applet Selection & TPT4 Handshake Verification ───────────────────────
 
   /// Sends `SELECT (0xA4)` for AID `F0 74 61 70 61 74 61 6E 01 01` and
   /// strictly verifies the 12-byte `"TPT4"` + 8-byte nonce Turing handshake.
+  /// On iOS CoreNFC, if the OS already selected `F07461706174616E0101` via
+  /// `Info.plist` (`initialSelectedAID`) and restricts manual `SELECT`, falls
+  /// back to cryptographic Turing Composition verification (`GET DATA` / `INTERNAL AUTHENTICATE`).
   static Future<Map<String, dynamic>> selectApplet(
     NfcTag tag, {
     bool fastReadIdentity = false,
   }) async {
-    final isoDep = IsoDepAndroid.from(tag);
-    if (isoDep == null) {
+    if (!isIso7816SupportedTag(tag)) {
       return {
         'success': false,
         'unauthorizedCard': true,
@@ -228,6 +332,10 @@ class JcopApduService {
             'Unauthorized NFC Card: Only an authentic Tapat JCOP4 Smart Card is supported.',
       };
     }
+
+    final bool iosPreselectedTapatAid = Platform.isIOS &&
+        (Iso7816Ios.from(tag)?.initialSelectedAID.toUpperCase() ==
+            kTapatanAppletAidHex);
 
     try {
       final int p2Byte = fastReadIdentity ? 0x01 : 0x00;
@@ -253,6 +361,12 @@ class JcopApduService {
       }
 
       if (!response.isSuccess) {
+        if (iosPreselectedTapatAid) {
+          return _verifyPreselectedIosApplet(
+            tag,
+            fastReadIdentity: fastReadIdentity,
+          );
+        }
         return {
           'success': false,
           'unauthorizedCard': true,
@@ -281,11 +395,60 @@ class JcopApduService {
           'identityText': decodedIdentity,
       };
     } catch (e) {
+      if (iosPreselectedTapatAid) {
+        return _verifyPreselectedIosApplet(
+          tag,
+          fastReadIdentity: fastReadIdentity,
+        );
+      }
       return {
         'success': false,
         'error': 'NFC communication lost during applet selection: $e',
       };
     }
+  }
+
+  /// Cryptographically verifies an iOS CoreNFC pre-selected `TapatMFAApplet`
+  /// when iOS restricts explicit `00 A4 04` re-selection.
+  static Future<Map<String, dynamic>> _verifyPreselectedIosApplet(
+    NfcTag tag, {
+    required bool fastReadIdentity,
+  }) async {
+    if (fastReadIdentity) {
+      final dataRes = await getDataFromCard(tag, p1: 0x01);
+      if (dataRes['success'] == true &&
+          (dataRes['text'] as String?)?.isNotEmpty == true) {
+        return {
+          'success': true,
+          'identityText': dataRes['text'],
+        };
+      }
+      return {
+        'success': false,
+        'unauthorizedCard': true,
+        'error': dataRes['error'] ??
+            'Unauthorized NFC Card: Failed Turing Composition identity check on iOS.',
+      };
+    }
+
+    final challengeRes = await getChallenge(tag);
+    if (challengeRes['success'] != true) {
+      return {
+        'success': false,
+        'unauthorizedCard': true,
+        'error': challengeRes['error'] ??
+            'Unauthorized NFC Card: Failed GET CHALLENGE on iOS.',
+      };
+    }
+    final nonce = challengeRes['nonce'] as Uint8List;
+    final mutualAuth = await sendChallengeResponse(tag, nonce);
+    if (mutualAuth['success'] != true) {
+      return mutualAuth;
+    }
+    return {
+      'success': true,
+      'nonce': nonce,
+    };
   }
 
   // ── Challenge-Response Authentication (Turing Composition) ───────────────
@@ -485,9 +648,25 @@ class JcopApduService {
 
   static Future<Map<String, dynamic>> readCardUid(NfcTag tag) async {
     try {
-      final androidTag = NfcTagAndroid.from(tag);
-      if (androidTag != null && androidTag.id.isNotEmpty) {
-        final uidBytes = androidTag.id;
+      Uint8List? uidBytes;
+      if (Platform.isAndroid) {
+        final androidTag = NfcTagAndroid.from(tag);
+        if (androidTag != null && androidTag.id.isNotEmpty) {
+          uidBytes = androidTag.id;
+        }
+      } else if (Platform.isIOS) {
+        final iso7816 = Iso7816Ios.from(tag);
+        if (iso7816 != null && iso7816.identifier.isNotEmpty) {
+          uidBytes = iso7816.identifier;
+        } else {
+          final mifare = MiFareIos.from(tag);
+          if (mifare != null && mifare.identifier.isNotEmpty) {
+            uidBytes = mifare.identifier;
+          }
+        }
+      }
+
+      if (uidBytes != null && uidBytes.isNotEmpty) {
         final uid = uidBytes
             .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
             .join(':');
@@ -507,11 +686,24 @@ class JcopApduService {
 
   static Future<Map<String, dynamic>> readAts(NfcTag tag) async {
     try {
-      final isoDep = IsoDepAndroid.from(tag);
-      if (isoDep != null) {
-        final hiLayer = isoDep.hiLayerResponse ?? isoDep.historicalBytes;
-        if (hiLayer != null && hiLayer.isNotEmpty) {
-          final ats = hiLayer
+      if (Platform.isAndroid) {
+        final isoDep = IsoDepAndroid.from(tag);
+        if (isoDep != null) {
+          final hiLayer = isoDep.hiLayerResponse ?? isoDep.historicalBytes;
+          if (hiLayer != null && hiLayer.isNotEmpty) {
+            final ats = hiLayer
+                .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
+                .join(' ');
+            return {'success': true, 'ats': ats};
+          }
+        }
+      } else if (Platform.isIOS) {
+        final iso7816 = Iso7816Ios.from(tag);
+        final hist = iso7816?.historicalBytes ??
+            iso7816?.applicationData ??
+            MiFareIos.from(tag)?.historicalBytes;
+        if (hist != null && hist.isNotEmpty) {
+          final ats = hist
               .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
               .join(' ');
           return {'success': true, 'ats': ats};

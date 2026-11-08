@@ -4,7 +4,7 @@ import 'dart:io' show Platform;
 import 'dart:math';
 
 import 'package:nfc_manager/nfc_manager.dart';
-import 'package:nfc_manager/nfc_manager_android.dart';
+import 'package:nfc_manager/nfc_manager_ios.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'jcop_apdu_service.dart';
@@ -100,12 +100,22 @@ class NfcService {
   static bool _isBusy = false;
   static DateTime? _lastSuccessTime;
 
-  static Future<void> stopSession() async {
+  static Future<void> stopSession({
+    String? alertMessage,
+    String? errorMessage,
+  }) async {
     _isBusy = false;
     try {
-      await NfcManager.instance.stopSession();
+      await NfcManager.instance.stopSession(
+        alertMessageIos: alertMessage,
+        errorMessageIos: errorMessage,
+      );
     } catch (_) {}
   }
+
+  static String get _holdCardInstruction => Platform.isIOS
+      ? 'top of your iPhone'
+      : 'back of the phone';
 
   /// Generates a cryptographically-random unique card ID.
   static String generateCardId() {
@@ -162,30 +172,48 @@ class NfcService {
         pollingOptions: {
           NfcPollingOption.iso14443,
         },
+        alertMessageIos:
+            'Hold the top of your iPhone near your Tapat JCOP4 Smart Card.',
+        onSessionErrorIos: (NfcReaderSessionErrorIos err) {
+          if (!tagHandled && !completer.isCompleted) {
+            _isBusy = false;
+            completer.complete({
+              'success': false,
+              'cancelled': true,
+              'error': err.message.isNotEmpty
+                  ? err.message
+                  : 'NFC scan cancelled.',
+            });
+          }
+        },
         onDiscovered: (NfcTag tag) async {
           // Single-action guard: ignore any duplicate discovery callbacks from the same tap
           if (tagHandled || completer.isCompleted) return;
           tagHandled = true;
 
           try {
-            // 1. Verify hardware UID & ISO-DEP transport
+            // 1. Verify hardware UID & ISO-DEP / ISO-7816 transport (Android & iOS)
             final uidRes = await JcopApduService.readCardUid(tag);
             final uid = uidRes['uid'] as String? ?? '';
 
-            if (!Platform.isAndroid) {
-              await stopSession();
+            if (!Platform.isAndroid && !Platform.isIOS) {
+              await stopSession(
+                errorMessage: 'NFC smart card requires Android or iOS.',
+              );
               if (!completer.isCompleted) {
                 completer.complete({
                   'success': false,
-                  'error': 'ISO-DEP TapatMFAApplet requires Android NFC.',
+                  'error':
+                      'ISO-7816 TapatMFAApplet requires Android or iOS NFC.',
                 });
               }
               return;
             }
 
-            final isoDep = IsoDepAndroid.from(tag);
-            if (isoDep == null) {
-              await stopSession();
+            if (!JcopApduService.isIso7816SupportedTag(tag)) {
+              await stopSession(
+                errorMessage: 'Unauthorized card — Tapat JCOP4 required.',
+              );
               if (!completer.isCompleted) {
                 completer.complete({
                   'success': false,
@@ -197,9 +225,7 @@ class NfcService {
               return;
             }
 
-            try {
-              await isoDep.setTimeout(5000);
-            } catch (_) {}
+            await JcopApduService.configureTagTimeout(tag, timeoutMs: 5000);
 
             // 2. Fast-path SELECT with P2=0x01 when reading identity (1 APDU total!)
             if (preferIdentity) {
@@ -210,7 +236,9 @@ class NfcService {
               if (fastSelect['success'] == true &&
                   (fastSelect['identityText'] as String?)?.isNotEmpty == true) {
                 _lastSuccessTime = DateTime.now();
-                await stopSession();
+                await stopSession(
+                  alertMessage: 'Tapat JCOP4 Verified ✓',
+                );
                 if (!completer.isCompleted) {
                   completer.complete({
                     'success': true,
@@ -225,7 +253,9 @@ class NfcService {
             // 3. Standard SELECT TapatMFAApplet & verify TPT4 Turing handshake
             final selectRes = await JcopApduService.selectApplet(tag);
             if (selectRes['success'] != true) {
-              await stopSession();
+              await stopSession(
+                errorMessage: 'Unauthorized NFC card.',
+              );
               if (!completer.isCompleted) {
                 completer.complete({
                   'success': false,
@@ -242,14 +272,19 @@ class NfcService {
               tag,
               p1: preferIdentity ? 0x01 : 0x00,
             );
-            await stopSession();
-
             if (dataRes['success'] != true) {
+              await stopSession(
+                errorMessage: 'Card verification failed.',
+              );
               if (!completer.isCompleted) {
                 completer.complete(dataRes);
               }
               return;
             }
+
+            await stopSession(
+              alertMessage: 'Tapat JCOP4 Verified ✓',
+            );
 
             _lastSuccessTime = DateTime.now();
             if (!completer.isCompleted) {
@@ -260,12 +295,14 @@ class NfcService {
               });
             }
           } catch (e) {
-            await stopSession();
+            await stopSession(
+              errorMessage: 'NFC read interrupted — hold card steady.',
+            );
             if (!completer.isCompleted) {
               completer.complete({
                 'success': false,
                 'error':
-                    'NFC read interrupted — hold your Tapat JCOP4 card steady against the phone.',
+                    'NFC read interrupted — hold your Tapat JCOP4 card steady against the $_holdCardInstruction.',
               });
             }
           }
@@ -274,12 +311,14 @@ class NfcService {
 
       Future.delayed(Duration(seconds: timeoutSeconds), () async {
         if (!completer.isCompleted) {
-          await stopSession();
+          await stopSession(
+            errorMessage: 'No Tapat JCOP4 card detected.',
+          );
           if (!completer.isCompleted) {
             completer.complete({
               'success': false,
               'error':
-                  'No Tapat JCOP4 Smart Card detected — hold your card steady against the back of the phone.',
+                  'No Tapat JCOP4 Smart Card detected — hold your card steady against the $_holdCardInstruction.',
             });
           }
         }
@@ -328,6 +367,21 @@ class NfcService {
         pollingOptions: {
           NfcPollingOption.iso14443,
         },
+        alertMessageIos: isIdentity
+            ? 'Hold the top of your iPhone near your Tapat JCOP4 Card to register.'
+            : 'Hold the top of your iPhone near your Tapat JCOP4 Card to arm payment.',
+        onSessionErrorIos: (NfcReaderSessionErrorIos err) {
+          if (!tagHandled && !completer.isCompleted) {
+            _isBusy = false;
+            completer.complete({
+              'success': false,
+              'cancelled': true,
+              'error': err.message.isNotEmpty
+                  ? err.message
+                  : 'NFC write cancelled.',
+            });
+          }
+        },
         onDiscovered: (NfcTag tag) async {
           if (tagHandled || completer.isCompleted) return;
           tagHandled = true;
@@ -336,9 +390,10 @@ class NfcService {
             final uidRes = await JcopApduService.readCardUid(tag);
             final uid = uidRes['uid'] as String? ?? '';
 
-            final isoDep = Platform.isAndroid ? IsoDepAndroid.from(tag) : null;
-            if (isoDep == null) {
-              await stopSession();
+            if (!JcopApduService.isIso7816SupportedTag(tag)) {
+              await stopSession(
+                errorMessage: 'Unauthorized card — Tapat JCOP4 required.',
+              );
               if (!completer.isCompleted) {
                 completer.complete({
                   'success': false,
@@ -350,13 +405,13 @@ class NfcService {
               return;
             }
 
-            try {
-              await isoDep.setTimeout(5000);
-            } catch (_) {}
+            await JcopApduService.configureTagTimeout(tag, timeoutMs: 5000);
 
             final selectRes = await JcopApduService.selectApplet(tag);
             if (selectRes['success'] != true) {
-              await stopSession();
+              await stopSession(
+                errorMessage: 'Unauthorized NFC card.',
+              );
               if (!completer.isCompleted) {
                 completer.complete(selectRes);
               }
@@ -368,21 +423,26 @@ class NfcService {
               text,
               p1: isIdentity ? 0x01 : 0x00,
             );
-            await stopSession();
-
             if (storeRes['success'] != true) {
+              await stopSession(
+                errorMessage: 'Failed to write to card.',
+              );
               if (!completer.isCompleted) {
                 completer.complete(storeRes);
               }
               return;
             }
 
+            await stopSession(alertMessage: successMsg);
+
             _lastSuccessTime = DateTime.now();
             if (!completer.isCompleted) {
               completer.complete({'success': true, 'uid': uid});
             }
           } catch (e) {
-            await stopSession();
+            await stopSession(
+              errorMessage: 'NFC write interrupted — hold card steady.',
+            );
             if (!completer.isCompleted) {
               completer.complete({
                 'success': false,
@@ -396,12 +456,14 @@ class NfcService {
 
       Future.delayed(Duration(seconds: timeoutSeconds), () async {
         if (!completer.isCompleted) {
-          await stopSession();
+          await stopSession(
+            errorMessage: 'No Tapat JCOP4 card detected.',
+          );
           if (!completer.isCompleted) {
             completer.complete({
               'success': false,
               'error':
-                  'No Tapat JCOP4 Smart Card detected — hold your card steady against the back of the phone.',
+                  'No Tapat JCOP4 Smart Card detected — hold your card steady against the $_holdCardInstruction.',
             });
           }
         }
@@ -590,6 +652,19 @@ class NfcService {
         pollingOptions: {
           NfcPollingOption.iso14443,
         },
+        alertMessageIos:
+            'Hold the top of your iPhone near your Tapat JCOP4 Smart Card.',
+        onSessionErrorIos: (NfcReaderSessionErrorIos err) {
+          if (!tagHandled && !completer.isCompleted) {
+            completer.complete({
+              'success': false,
+              'cancelled': true,
+              'error': err.message.isNotEmpty
+                  ? err.message
+                  : 'NFC scan cancelled.',
+            });
+          }
+        },
         onDiscovered: (NfcTag tag) async {
           if (tagHandled || completer.isCompleted) return;
           tagHandled = true;
@@ -598,9 +673,10 @@ class NfcService {
             final uidRes = await JcopApduService.readCardUid(tag);
             final uid = uidRes['uid'] as String? ?? '';
 
-            final isoDep = Platform.isAndroid ? IsoDepAndroid.from(tag) : null;
-            if (isoDep == null) {
-              await stopSession();
+            if (!JcopApduService.isIso7816SupportedTag(tag)) {
+              await stopSession(
+                errorMessage: 'Unauthorized card — Tapat JCOP4 required.',
+              );
               if (!completer.isCompleted) {
                 completer.complete({
                   'success': false,
@@ -612,13 +688,13 @@ class NfcService {
               return;
             }
 
-            try {
-              await isoDep.setTimeout(4000);
-            } catch (_) {}
+            await JcopApduService.configureTagTimeout(tag, timeoutMs: 4000);
 
             final selectRes = await JcopApduService.selectApplet(tag);
             if (selectRes['success'] != true) {
-              await stopSession();
+              await stopSession(
+                errorMessage: 'Unauthorized NFC card.',
+              );
               if (!completer.isCompleted) {
                 completer.complete(selectRes);
               }
@@ -628,7 +704,9 @@ class NfcService {
             final retryRes = await JcopApduService.getPinRetryCount(tag);
             final retriesLeft = retryRes['retriesLeft'] as int? ?? 5;
 
-            await stopSession();
+            await stopSession(
+              alertMessage: 'Tapat JCOP4 Verified ✓',
+            );
             if (!completer.isCompleted) {
               completer.complete({
                 'success': true,
@@ -637,7 +715,9 @@ class NfcService {
               });
             }
           } catch (e) {
-            await stopSession();
+            await stopSession(
+              errorMessage: 'NFC read interrupted — hold card steady.',
+            );
             if (!completer.isCompleted) {
               completer.complete({
                 'success': false,
@@ -650,12 +730,14 @@ class NfcService {
 
       Future.delayed(Duration(seconds: timeoutSeconds), () async {
         if (!completer.isCompleted) {
-          await stopSession();
+          await stopSession(
+            errorMessage: 'No Tapat JCOP4 card detected.',
+          );
           if (!completer.isCompleted) {
             completer.complete({
               'success': false,
               'error':
-                  'No Tapat JCOP4 Smart Card detected — hold your card steady against the back of the phone.',
+                  'No Tapat JCOP4 Smart Card detected — hold your card steady against the $_holdCardInstruction.',
             });
           }
         }
