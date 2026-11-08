@@ -82,6 +82,10 @@ void main() {
         pbxContent,
         contains('CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;'),
       );
+      expect(
+        pbxContent,
+        contains('PRODUCT_BUNDLE_IDENTIFIER = com.sare.secureNfcPay.v2;'),
+      );
     });
   });
 }

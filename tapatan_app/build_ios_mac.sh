@@ -10,7 +10,7 @@ set -euo pipefail
 #   ./build_ios_mac.sh
 #
 # Output:
-#   ../builds/tapatan-app-ios.ipa (unsigned .ipa for sideloading / re-signing)
+#   ../builds/tapatan-app-v2-ios.ipa (unsigned .ipa for sideloading / re-signing)
 #
 # Note on Physical iPhone CoreNFC:
 #   To scan the physical JCOP4 J3R150 Java Card over CoreNFC on an iPhone, open
@@ -35,16 +35,16 @@ echo "==> [3/5] Installing CocoaPods in ios/..."
 echo "==> [4/5] Building iOS Release Runner.app (--no-codesign)..."
 flutter build ios --release --no-codesign
 
-echo "==> [5/5] Packaging ../builds/tapatan-app-ios.ipa..."
+echo "==> [5/5] Packaging ../builds/tapatan-app-v2-ios.ipa..."
 mkdir -p ../builds
 rm -rf build/ios/ipa_out
 mkdir -p build/ios/ipa_out/Payload
 cp -R build/ios/iphoneos/Runner.app build/ios/ipa_out/Payload/Runner.app
 (
   cd build/ios/ipa_out
-  zip -qry "$SCRIPT_DIR/../builds/tapatan-app-ios.ipa" Payload
+  zip -qry "$SCRIPT_DIR/../builds/tapatan-app-v2-ios.ipa" Payload
 )
 rm -rf build
 
-echo "Done! iOS package written to: $(cd ../builds && pwd)/tapatan-app-ios.ipa"
+echo "Done! iOS package written to: $(cd ../builds && pwd)/tapatan-app-v2-ios.ipa"
 
