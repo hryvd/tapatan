@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'screens/auth_screen.dart';
+import 'screens/security_info_screen.dart';
+import 'ui/tokens.dart';
 import 'screens/main_shell.dart';
 
 void main() {
@@ -19,22 +21,25 @@ class BantayApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Bantay',
+      title: 'tap@tan v2',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF020B18), // deep navy-black
-        primaryColor: const Color(0xFF0891B2), // teal primary
+        scaffoldBackgroundColor: T.bg,
+        canvasColor: T.bg,
+        primaryColor: T.cyan600,
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF0891B2),   // teal
-          secondary: Color(0xFF0369A1), // deep blue
-          surface: Color(0xFF0C1A2E),
-          error: Color(0xFFEF4444),
+          primary: T.cyan400,
+          secondary: T.indigo500,
+          surface: T.card,
+          error: T.red500,
         ),
-        textTheme: GoogleFonts.interTextTheme(Theme.of(context).textTheme).apply(
-          bodyColor: const Color(0xFFFAFAFA),
-          displayColor: const Color(0xFFFAFAFA),
+        textTheme: GoogleFonts.plusJakartaSansTextTheme(ThemeData.dark().textTheme).apply(
+          bodyColor: T.fg,
+          displayColor: T.fg,
         ),
+        splashFactory: NoSplash.splashFactory,
+        highlightColor: Colors.transparent,
         pageTransitionsTheme: const PageTransitionsTheme(
           builders: <TargetPlatform, PageTransitionsBuilder>{
             TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
@@ -49,6 +54,7 @@ class BantayApp extends StatelessWidget {
       routes: {
         '/auth': (context) => const AuthScreen(),
         '/main': (context) => const MainShell(),
+        '/security': (context) => const SecurityInfoScreen(),
       },
     );
   }

@@ -3,6 +3,9 @@ import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
+
+import '../ui/tokens.dart';
+import '../ui/widgets.dart';
 import '../utils/lucide_icons.dart';
 
 Future<String> _cropImage(Map<String, dynamic> params) async {
@@ -29,7 +32,7 @@ Future<String> _cropImage(Map<String, dynamic> params) async {
 
   final cropped = img.copyCrop(original, x: x, y: y, width: w, height: h);
   final newBytes = img.encodeJpg(cropped, quality: 85);
-  
+
   final newPath = path.replaceFirst(RegExp(r'\.jpg|\.jpeg'), '_cropped.jpg');
   await File(newPath).writeAsBytes(newBytes);
   return newPath;
@@ -91,7 +94,9 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
     try {
       _cameras = await availableCameras();
       if (_cameras.isEmpty) {
-        setState(() => _errorMessage = 'No cameras found on this device.');
+        if (mounted) {
+          setState(() => _errorMessage = 'No cameras found on this device.');
+        }
         return;
       }
 
@@ -127,18 +132,19 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
 
   Future<void> _capture() async {
     if (_controller == null || !_isInitialized || _isCapturing) return;
+
+    final size = MediaQuery.of(context).size;
+    final frameW = widget.isOval ? size.width * 0.65 : size.width * 0.85;
+    final frameH = widget.isOval ? size.width * 0.8 : size.width * 0.58;
+    final centerY = size.height * 0.42;
+
+    final left = (size.width - frameW) / 2;
+    final top = centerY - frameH / 2;
+
     setState(() => _isCapturing = true);
 
     try {
       final file = await _controller!.takePicture();
-      
-      final size = MediaQuery.of(context).size;
-      final frameW = widget.isOval ? size.width * 0.65 : size.width * 0.85;
-      final frameH = widget.isOval ? size.width * 0.8 : size.width * 0.58;
-      final centerY = size.height * 0.42;
-
-      final left = (size.width - frameW) / 2;
-      final top = centerY - frameH / 2;
 
       final croppedPath = await compute(_cropImage, {
         'path': file.path,
@@ -150,18 +156,12 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
         'cropH': frameH,
       });
 
-      if (mounted) {
-        Navigator.of(context).pop(croppedPath);
-      }
+      if (!mounted) return;
+      Navigator.of(context).pop(croppedPath);
     } catch (e) {
       if (mounted) {
         setState(() => _isCapturing = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Capture failed: ${e.toString()}'),
-            backgroundColor: const Color(0xFFEF4444),
-          ),
-        );
+        showToast(context, 'Capture failed: ${e.toString()}');
       }
     }
   }
@@ -177,11 +177,11 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: T.bg,
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // ── Camera Preview ──────────────────────────────────────────────
+          // Camera Preview
           if (_isInitialized && _controller != null)
             CameraPreview(_controller!)
           else if (_errorMessage != null)
@@ -189,50 +189,29 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
           else
             _buildLoadingState(),
 
-          // ── Dark overlay with cutout ────────────────────────────────────
-          if (_isInitialized)
-            _buildOverlay(context),
+          // Dark liquid-glass overlay with cutout
+          if (_isInitialized) _buildOverlay(context),
 
-          // ── Top bar ────────────────────────────────────────────────────
+          // Top navigation bar
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
               child: Row(
                 children: [
-                  GestureDetector(
+                  GlassIconBtn(
+                    icon: LucideIcons.x,
+                    size: 40,
+                    iconSize: 18,
                     onTap: () => Navigator.of(context).pop(null),
-                    child: Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.5),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.white.withOpacity(0.2)),
-                      ),
-                      child: const Icon(LucideIcons.x, color: Colors.white, size: 20),
-                    ),
                   ),
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 14),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          widget.title,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white,
-                          ),
-                        ),
-                        Text(
-                          widget.subtitle,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.white.withOpacity(0.55),
-                          ),
-                        ),
+                        Text(widget.title, style: T.text(16, w: T.w800)),
+                        Text(widget.subtitle, style: T.caption),
                       ],
                     ),
                   ),
@@ -241,7 +220,7 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
             ),
           ),
 
-          // ── Bottom capture button ───────────────────────────────────────
+          // Bottom capture button
           if (_isInitialized)
             Align(
               alignment: Alignment.bottomCenter,
@@ -257,20 +236,18 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
                         child: child,
                       ),
                       child: Container(
-                        width: 80,
-                        height: 80,
+                        width: 76,
+                        height: 76,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: Colors.white,
-                          border: Border.all(
-                            color: const Color(0xFF0891B2),
-                            width: 4,
-                          ),
+                          gradient: T.btnLiquidGradient,
+                          border: Border.all(color: T.white(.6), width: 2),
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFF0891B2)
-                                  .withOpacity(0.5 * _pulseAnim.value),
-                              blurRadius: 24,
+                              color: T.cyan500.withValues(
+                                alpha: 0.5 * _pulseAnim.value,
+                              ),
+                              blurRadius: 26,
                               spreadRadius: 4,
                             ),
                           ],
@@ -280,13 +257,13 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
                                 padding: EdgeInsets.all(22),
                                 child: CircularProgressIndicator(
                                   strokeWidth: 3,
-                                  color: Color(0xFF0891B2),
+                                  color: Colors.white,
                                 ),
                               )
                             : const Icon(
                                 LucideIcons.camera,
-                                color: Color(0xFF0369A1),
-                                size: 32,
+                                color: T.slate900,
+                                size: 30,
                               ),
                       ),
                     ),
@@ -318,7 +295,7 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
           // Scanning line animation
           AnimatedBuilder(
             animation: _scanLineAnim,
-            builder: (_, __) {
+            builder: (_, _) {
               final top = (centerY - frameH / 2) + (frameH * _scanLineAnim.value);
               final left = (size.width - frameW) / 2 + 4;
               return Positioned(
@@ -331,7 +308,7 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
                     gradient: LinearGradient(
                       colors: [
                         Colors.transparent,
-                        const Color(0xFF38BDF8).withOpacity(0.8),
+                        T.cyan400.withValues(alpha: 0.85),
                         Colors.transparent,
                       ],
                     ),
@@ -353,16 +330,15 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
     final top = centerY - frameH / 2;
     const len = 24.0;
     const thick = 3.0;
-    const color = Color(0xFF38BDF8);
+    const color = T.cyan400;
 
     Widget corner(double x, double y, bool flipH, bool flipV) {
       return Positioned(
         left: x,
         top: y,
-        child: Transform(
-          alignment: Alignment.center,
-          transform: Matrix4.identity()
-            ..scale(flipH ? -1.0 : 1.0, flipV ? -1.0 : 1.0),
+        child: Transform.scale(
+          scaleX: flipH ? -1.0 : 1.0,
+          scaleY: flipV ? -1.0 : 1.0,
           child: SizedBox(
             width: len,
             height: len,
@@ -384,16 +360,16 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
 
   Widget _buildLoadingState() {
     return Container(
-      color: const Color(0xFF020B18),
-      child: const Center(
+      color: T.bg,
+      child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircularProgressIndicator(color: Color(0xFF0891B2)),
-            SizedBox(height: 16),
+            const CircularProgressIndicator(color: T.cyan400),
+            const SizedBox(height: 16),
             Text(
               'Starting camera...',
-              style: TextStyle(color: Colors.white54, fontSize: 14),
+              style: T.text(14, color: T.white(.55)),
             ),
           ],
         ),
@@ -403,39 +379,24 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
 
   Widget _buildErrorState() {
     return Container(
-      color: const Color(0xFF020B18),
+      color: T.bg,
       padding: const EdgeInsets.all(32),
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(LucideIcons.cameraOff, color: Color(0xFFEF4444), size: 48),
+            const Icon(LucideIcons.cameraOff, color: T.red400, size: 48),
             const SizedBox(height: 16),
             Text(
               _errorMessage ?? 'Camera unavailable',
-              style: const TextStyle(color: Colors.white70, fontSize: 14),
+              style: T.text(14, color: T.white(.7)),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
-            GestureDetector(
+            Btn.text(
+              'Go Back',
+              variant: BtnVariant.glass,
               onTap: () => Navigator.of(context).pop(null),
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF0369A1), Color(0xFF0891B2)],
-                  ),
-                  borderRadius: BorderRadius.circular(50),
-                ),
-                child: const Text(
-                  'Go Back',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
             ),
           ],
         ),
@@ -463,7 +424,7 @@ class _OverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final dimPaint = Paint()..color = Colors.black.withOpacity(0.62);
+    final dimPaint = Paint()..color = T.blk(.65);
     final clearPaint = Paint()..blendMode = BlendMode.clear;
 
     final left = (size.width - frameWidth) / 2;
@@ -486,7 +447,7 @@ class _OverlayPainter extends CustomPainter {
 
     // Frame border
     final borderPaint = Paint()
-      ..color = const Color(0xFF38BDF8)
+      ..color = T.cyan400
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.0;
 

@@ -67,4 +67,27 @@ class LucideIcons {
   static const IconData store = Icons.storefront;
   static const IconData nfc = Icons.nfc;
   static const IconData phone = Icons.phone;
+  // UI v2 additions
+  static const IconData shieldAlert = Icons.gpp_maybe;
+  static const IconData delete = Icons.backspace_outlined;
+  static const IconData rotateCw = Icons.rotate_right;
+  static const IconData layers = Icons.layers;
+  static const IconData snowflake = Icons.ac_unit;
+  static const IconData minus = Icons.remove;
+  static const IconData shoppingBasket = Icons.shopping_basket;
+  static const IconData brain = Icons.psychology;
+  static const IconData key = Icons.vpn_key;
+  static const IconData award = Icons.emoji_events;
+  static const IconData database = Icons.storage;
+  static const IconData gitBranch = Icons.alt_route;
+  static const IconData target = Icons.adjust;
+  static const IconData clock = Icons.access_time;
+  static const IconData rotateCcw = Icons.restart_alt;
+  static const IconData pieChart = Icons.pie_chart;
+  static const IconData banknote = Icons.payments_outlined;
+  static const IconData sparkles = Icons.auto_awesome;
+  static const IconData pencil = Icons.edit_outlined;
+  static const IconData octagonAlert = Icons.report_gmailerrorred;
+  static const IconData flaskConical = Icons.science_outlined;
+  static const IconData server = Icons.dns_outlined;
 }

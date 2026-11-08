@@ -523,15 +523,34 @@ class UserNotifier extends StateNotifier<UserState> {
   /// stored database records.
   Future<void> clearUser() => signOut();
 
+  /// Updates the cardholder's profile name and persists it across virtual
+  /// cards and the account database.
+  void updateProfileName(String newName) {
+    final trimmed = newName.trim();
+    if (trimmed.isEmpty || trimmed.toLowerCase() == 'richard') return;
+    _hasManualMutation = true;
+    state = state.copyWith(
+      name: trimmed,
+      virtualCards: _syncCardsWithBalance(
+        state.virtualCards,
+        state.balance,
+        holderName: trimmed,
+      ),
+    );
+    _persistState();
+  }
+
   /// Updates the in-memory JCOP hardware state after a successful NFC tap.
   void updateJcopCardInfo({
     required String uid,
+    String? cardId,
     int pinRetriesLeft = -1,
     String lifecycleState = 'op_ready',
   }) {
     _hasManualMutation = true;
     state = state.copyWith(
       jcopCardUid: uid,
+      cardId: (cardId != null && cardId.isNotEmpty) ? cardId : state.cardId,
       pinRetriesLeft: pinRetriesLeft,
       cardLifecycleState: lifecycleState,
     );

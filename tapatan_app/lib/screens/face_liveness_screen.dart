@@ -3,12 +3,15 @@ import 'dart:io' show Platform;
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+
+import '../ui/tokens.dart';
+import '../ui/widgets.dart';
 import '../utils/lucide_icons.dart';
 
 /// A full-screen face liveness detection widget.
 /// Uses the front camera + ML Kit face detector.
-/// Calls [onLivenessConfirmed] when liveness is verified, or
-/// pops the navigator with null if cancelled.
+/// Calls [Navigator.pop(true)] when liveness is verified, or
+/// pops with null if cancelled.
 class FaceLivenessScreen extends StatefulWidget {
   const FaceLivenessScreen({super.key});
 
@@ -62,15 +65,17 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
       vsync: this,
       duration: const Duration(milliseconds: 900),
     )..repeat(reverse: true);
-    _pulseAnim = Tween<double>(begin: 1.0, end: 1.04)
-        .animate(CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut));
+    _pulseAnim = Tween<double>(begin: 1.0, end: 1.04).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
 
     _glowController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1600),
     )..repeat(reverse: true);
-    _glowAnim = Tween<double>(begin: 0.4, end: 1.0)
-        .animate(CurvedAnimation(parent: _glowController, curve: Curves.easeInOut));
+    _glowAnim = Tween<double>(begin: 0.4, end: 1.0).animate(
+      CurvedAnimation(parent: _glowController, curve: Curves.easeInOut),
+    );
 
     _initCamera();
   }
@@ -79,7 +84,9 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
-        setState(() => _errorMessage = 'No cameras available.');
+        if (mounted) {
+          setState(() => _errorMessage = 'No cameras available.');
+        }
         return;
       }
 
@@ -107,7 +114,9 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
         _startFaceStream();
       }
     } catch (e) {
-      if (mounted) setState(() => _errorMessage = 'Camera error: $e');
+      if (mounted) {
+        setState(() => _errorMessage = 'Camera error: $e');
+      }
     }
   }
 
@@ -260,7 +269,11 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
     _pulseController.dispose();
     _glowController.dispose();
     _faceDetector.close();
-    _controller?.stopImageStream();
+    if (_streamActive && (_controller?.value.isStreamingImages ?? false)) {
+      try {
+        _controller?.stopImageStream();
+      } catch (_) {}
+    }
     _controller?.dispose();
     super.dispose();
   }
@@ -268,13 +281,13 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
   Color get _frameColor {
     switch (_step) {
       case _LivenessStep.detecting:
-        return const Color(0xFF0891B2);
+        return T.cyan400;
       case _LivenessStep.blinkCheck:
-        return const Color(0xFFF59E0B);
+        return T.amber500;
       case _LivenessStep.smileCheck:
-        return const Color(0xFF8B5CF6);
+        return T.indigo500;
       case _LivenessStep.done:
-        return const Color(0xFF10B981);
+        return T.emerald400;
     }
   }
 
@@ -294,7 +307,7 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: T.bg,
       body: Stack(
         fit: StackFit.expand,
         children: [
@@ -315,42 +328,24 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
               child: Row(
                 children: [
-                  GestureDetector(
+                  GlassIconBtn(
+                    icon: LucideIcons.x,
+                    size: 40,
+                    iconSize: 18,
                     onTap: () => Navigator.of(context).pop(null),
-                    child: Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.5),
-                        borderRadius: BorderRadius.circular(12),
-                        border:
-                            Border.all(color: Colors.white.withOpacity(0.2)),
-                      ),
-                      child:
-                          const Icon(LucideIcons.x, color: Colors.white, size: 20),
-                    ),
                   ),
-                  const SizedBox(width: 16),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        'Face Liveness Check',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.white,
-                        ),
-                      ),
-                      Text(
-                        'On-device • No data sent to servers',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.white.withOpacity(0.5),
-                        ),
-                      ),
-                    ],
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('Face Liveness Check',
+                            style: T.text(16, w: T.w800)),
+                        Text('On-device · No data sent to servers',
+                            style: T.caption),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -362,7 +357,7 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
             alignment: Alignment.bottomCenter,
             child: SafeArea(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
                 child: _buildInstructionCard(),
               ),
             ),
@@ -380,7 +375,7 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
 
     return AnimatedBuilder(
       animation: _glowAnim,
-      builder: (_, __) {
+      builder: (_, _) {
         return CustomPaint(
           painter: _OvalOverlayPainter(
             frameWidth: frameW,
@@ -395,20 +390,10 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
   }
 
   Widget _buildInstructionCard() {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 400),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.75),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: _frameColor.withOpacity(0.5)),
-        boxShadow: [
-          BoxShadow(
-            color: _frameColor.withOpacity(0.25),
-            blurRadius: 20,
-          ),
-        ],
-      ),
+    return Glass(
+      kind: GlassKind.strong,
+      radius: T.rGlass,
+      padding: const EdgeInsets.all(18),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -421,17 +406,17 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
                 duration: const Duration(milliseconds: 300),
                 margin: const EdgeInsets.symmetric(horizontal: 4),
                 width: filled ? 28 : 10,
-                height: 10,
+                height: 8,
                 decoration: BoxDecoration(
-                  color: filled ? _frameColor : Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(5),
+                  color: filled ? _frameColor : T.white(.2),
+                  borderRadius: BorderRadius.circular(4),
                 ),
               );
             }),
           ),
           const SizedBox(height: 14),
 
-          // Icon + progress
+          // Icon + progress instruction
           Row(
             children: [
               AnimatedBuilder(
@@ -445,8 +430,8 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
                   height: 44,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: _frameColor.withOpacity(0.15),
-                    border: Border.all(color: _frameColor.withOpacity(0.4)),
+                    color: T.op(_frameColor, .18),
+                    border: Border.all(color: T.op(_frameColor, .5)),
                   ),
                   child: Icon(_stepIcon, color: _frameColor, size: 22),
                 ),
@@ -461,20 +446,13 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
                       child: Text(
                         _instruction,
                         key: ValueKey(_instruction),
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.white,
-                        ),
+                        style: T.text(14.5, w: T.w800),
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       _subInstruction,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.white.withOpacity(0.5),
-                      ),
+                      style: T.text(11, color: T.white(.5)),
                     ),
                   ],
                 ),
@@ -488,10 +466,10 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
             borderRadius: BorderRadius.circular(4),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 500),
-              height: 6,
+              height: 5,
               child: LinearProgressIndicator(
                 value: _progress,
-                backgroundColor: Colors.white.withOpacity(0.1),
+                backgroundColor: T.white(.1),
                 valueColor: AlwaysStoppedAnimation<Color>(_frameColor),
               ),
             ),
@@ -503,15 +481,17 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
 
   Widget _buildLoading() {
     return Container(
-      color: const Color(0xFF020B18),
-      child: const Center(
+      color: T.bg,
+      child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircularProgressIndicator(color: Color(0xFF0891B2)),
-            SizedBox(height: 16),
-            Text('Starting camera...',
-                style: TextStyle(color: Colors.white54, fontSize: 14)),
+            const CircularProgressIndicator(color: T.cyan400),
+            const SizedBox(height: 16),
+            Text(
+              'Starting camera...',
+              style: T.text(14, color: T.white(.55)),
+            ),
           ],
         ),
       ),
@@ -520,36 +500,24 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
 
   Widget _buildError() {
     return Container(
-      color: const Color(0xFF020B18),
+      color: T.bg,
       padding: const EdgeInsets.all(32),
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(LucideIcons.cameraOff,
-                color: Color(0xFFEF4444), size: 48),
+            const Icon(LucideIcons.cameraOff, color: T.red400, size: 48),
             const SizedBox(height: 16),
             Text(
               _errorMessage ?? 'Camera unavailable',
-              style:
-                  const TextStyle(color: Colors.white70, fontSize: 14),
+              style: T.text(14, color: T.white(.7)),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
-            GestureDetector(
+            Btn.text(
+              'Go Back',
+              variant: BtnVariant.glass,
               onTap: () => Navigator.of(context).pop(null),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 24, vertical: 12),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                      colors: [Color(0xFF0369A1), Color(0xFF0891B2)]),
-                  borderRadius: BorderRadius.circular(50),
-                ),
-                child: const Text('Go Back',
-                    style: TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.w700)),
-              ),
             ),
           ],
         ),
@@ -581,18 +549,17 @@ class _OvalOverlayPainter extends CustomPainter {
     final top = centerY - frameHeight / 2;
     final rect = Rect.fromLTWH(left, top, frameWidth, frameHeight);
 
-    final dimPaint = Paint()..color = Colors.black.withOpacity(0.65);
+    final dimPaint = Paint()..color = T.blk(.65);
     final clearPaint = Paint()..blendMode = BlendMode.clear;
 
     canvas.saveLayer(Rect.fromLTWH(0, 0, size.width, size.height), Paint());
-    canvas.drawRect(
-        Rect.fromLTWH(0, 0, size.width, size.height), dimPaint);
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), dimPaint);
     canvas.drawOval(rect, clearPaint);
     canvas.restore();
 
     // Glowing oval border
     final borderPaint = Paint()
-      ..color = borderColor.withOpacity(0.6 + glowOpacity * 0.4)
+      ..color = borderColor.withValues(alpha: 0.6 + glowOpacity * 0.4)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.5
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, 6 * glowOpacity);

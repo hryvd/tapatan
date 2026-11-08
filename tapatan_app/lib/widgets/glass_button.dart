@@ -95,8 +95,8 @@ class _GlassButtonState extends State<GlassButton>
               ),
               border: Border.all(
                 color: widget.isSecondary
-                    ? const Color(0xFF0891B2).withOpacity(0.35)
-                    : Colors.white.withOpacity(0.15),
+                    ? const Color(0xFF0891B2).withValues(alpha: 0.35)
+                    : Colors.white.withValues(alpha: 0.15),
               ),
               boxShadow: disabled
                   ? null
@@ -105,7 +105,7 @@ class _GlassButtonState extends State<GlassButton>
                         color: (widget.isSecondary
                                 ? const Color(0xFF0369A1)
                                 : const Color(0xFF0891B2))
-                            .withOpacity(0.30),
+                            .withValues(alpha: 0.30),
                         blurRadius: 20,
                         offset: const Offset(0, 6),
                       ),

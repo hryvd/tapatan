@@ -1,6 +1,14 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../providers/user_provider.dart';
+import '../ui/card_face.dart' as ui_card;
+import '../ui/tokens.dart';
+import '../ui/widgets.dart';
 import '../utils/lucide_icons.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
@@ -20,299 +28,960 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
-  bool _showBalance = true;
+  bool _hideBalance = false;
+  bool _cardHovered = false;
+  String _filter = 'all'; // all | nfc | sare | cashin
 
-  String _greeting() {
-    final hour = DateTime.now().hour;
-    if (hour < 12) return 'Good morning â˜€ï¸';
-    if (hour < 17) return 'Good afternoon ðŸŒ¤ï¸';
-    return 'Good evening ðŸŒ™';
+  Timer? _armedTick;
+  int _armedSecsLeft = 300;
+
+  @override
+  void initState() {
+    super.initState();
+    _armedTick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      final armed = ref.read(userProvider).cardArmed;
+      if (armed) {
+        if (_armedSecsLeft > 0) {
+          setState(() => _armedSecsLeft--);
+        }
+      } else if (_armedSecsLeft != 300) {
+        setState(() => _armedSecsLeft = 300);
+      }
+    });
   }
 
-  void _showTopUpModal(BuildContext context) {
-    final amountCtrl = TextEditingController();
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) {
-        return Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-          child: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF031424), Color(0xFF020B18)],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-              border: Border(top: BorderSide(color: Color(0x1FFFFFFF))),
-            ),
-            padding: const EdgeInsets.all(24),
-            child: StatefulBuilder(
-              builder: (ctx, setModalState) {
-                final quickAmounts = [100, 500, 1000, 5000];
-                double? selectedQuick;
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('Top Up Balance', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
-                        GestureDetector(
-                          onTap: () => Navigator.pop(ctx),
-                          child: Container(
-                            width: 32, height: 32,
-                            decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withOpacity(0.08)),
-                            child: Icon(LucideIcons.x, size: 16, color: Colors.white.withOpacity(0.6)),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text('Quick-select or enter custom amount', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12)),
-                    const SizedBox(height: 20),
-                    // Quick amounts
-                    Row(
-                      children: quickAmounts.map((a) {
-                        return Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: GestureDetector(
-                              onTap: () {
-                                amountCtrl.text = a.toString();
-                                setModalState(() => selectedQuick = a.toDouble());
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(vertical: 10),
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(16),
-                                  gradient: selectedQuick == a
-                                      ? const LinearGradient(colors: [Color(0xFF10B981), Color(0xFF059669)])
-                                      : null,
-                                  color: selectedQuick != a ? Colors.white.withOpacity(0.06) : null,
-                                  border: Border.all(
-                                    color: selectedQuick == a
-                                        ? const Color(0xFF10B981)
-                                        : Colors.white.withOpacity(0.10),
-                                  ),
-                                ),
-                                child: Text('â‚±$a', textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: selectedQuick == a ? Colors.white : Colors.white.withOpacity(0.6),
-                                    fontSize: 12, fontWeight: FontWeight.w700,
-                                  )),
-                              ),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                    const SizedBox(height: 16),
-                    // Custom amount
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.05),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.white.withOpacity(0.12)),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                      child: Row(
-                        children: [
-                          Text('â‚± ', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 18)),
-                          Expanded(
-                            child: TextField(
-                              controller: amountCtrl,
-                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                              style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700),
-                              decoration: InputDecoration(
-                                border: InputBorder.none,
-                                hintText: '0.00',
-                                hintStyle: TextStyle(color: Colors.white.withOpacity(0.2)),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    GestureDetector(
-                      onTap: () {
-                        final amount = double.tryParse(amountCtrl.text);
-                        if (amount != null && amount > 0) {
-                          ref.read(userProvider.notifier).topUp(amount);
-                          Navigator.pop(ctx);
-                        }
-                      },
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(colors: [Color(0xFF10B981), Color(0xFF059669)]),
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: const [BoxShadow(color: Color(0x5010B981), blurRadius: 20, offset: Offset(0, 8))],
-                        ),
-                        child: const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(LucideIcons.arrowDownLeft, color: Colors.white, size: 18),
-                            SizedBox(width: 8),
-                            Text('Top Up Now', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800)),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                );
-              },
-            ),
-          ),
-        );
-      },
+  @override
+  void dispose() {
+    _armedTick?.cancel();
+    super.dispose();
+  }
+
+  String _greeting() {
+    final h = DateTime.now().hour;
+    if (h < 12) return 'Good morning,';
+    if (h < 18) return 'Good afternoon,';
+    return 'Good evening,';
+  }
+
+  String _peso(double amount) {
+    final abs = amount.abs().toStringAsFixed(2);
+    final parts = abs.split('.');
+    final intPart = parts[0].replaceAllMapped(
+      RegExp(r'\B(?=(\d{3})+(?!\d))'),
+      (m) => ',',
+    );
+    return '${amount < 0 ? '-' : ''}₱$intPart.${parts[1]}';
+  }
+
+  String _mmss(int secs) {
+    final s = secs.clamp(0, 3599);
+    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+  }
+
+  ui_card.CardData _toUiCard(CardData? card, String cardId) {
+    if (card == null) {
+      final tail = cardId.length >= 4
+          ? cardId.substring(cardId.length - 4)
+          : '8821';
+      return ui_card.CardData(
+        id: 'primary-jcop4',
+        name: 'Tapat JCOP4',
+        material: 'obsidian',
+        network: 'ISO 14443-4',
+        num: '4532 •••• •••• $tail',
+        physical: true,
+      );
+    }
+    final isPrimary =
+        card.id == 'card-tapat-primary' || card.provider.contains('JCOP4');
+    final mat = isPrimary
+        ? 'obsidian'
+        : card.type.toLowerCase() == 'mastercard'
+            ? 'indigo'
+            : 'cyber';
+    return ui_card.CardData(
+      id: card.id,
+      name: card.provider,
+      material: mat,
+      network: isPrimary
+          ? 'ISO 14443-4'
+          : (card.type.toLowerCase() == 'mastercard'
+              ? 'Mastercard Tokenized'
+              : 'Visa Tokenized'),
+      num: card.cardNumber,
+      physical: isPrimary,
     );
   }
 
-  void _showReceiveModal(BuildContext context, UserState user) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF031424), Color(0xFF020B18)],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-          border: Border(top: BorderSide(color: Color(0x1FFFFFFF))),
-        ),
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+  // ── Modals (1:1 React Sheets) ─────────────────────────────────────────────
+
+  void _openCashInSheet() {
+    final ctrl = TextEditingController(text: '500');
+    double amt = 500;
+    showAppSheet(
+      context,
+      title: 'Cash In',
+      child: StatefulBuilder(
+        builder: (ctx, setModal) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Receive Money', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
-                GestureDetector(
-                  onTap: () => Navigator.pop(context),
-                  child: Container(
-                    width: 32, height: 32,
-                    decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withOpacity(0.08)),
-                    child: Icon(LucideIcons.x, size: 16, color: Colors.white.withOpacity(0.6)),
+              children: [100, 500, 1000, 5000].map((v) {
+                final selected = amt == v.toDouble();
+                return Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(right: v == 5000 ? 0 : 8),
+                    child: PressScale(
+                      onTap: () => setModal(() {
+                        amt = v.toDouble();
+                        ctrl.text = v.toString();
+                      }),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        height: 46,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: selected ? T.op(T.cyan400, .2) : T.white(.06),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: selected ? T.op(T.cyan300, .6) : T.white(.1),
+                          ),
+                        ),
+                        child: Text(
+                          '₱$v',
+                          style: T.text(
+                            13,
+                            w: T.w700,
+                            color: selected ? T.cyan200 : T.white(.75),
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                );
+              }).toList(),
             ),
-            const SizedBox(height: 20),
-            Container(
-              width: 140, height: 140,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.06),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.white.withOpacity(0.12)),
-              ),
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(LucideIcons.qrCode, size: 64, color: Colors.white.withOpacity(0.6)),
-                    const SizedBox(height: 4),
-                    Text('QR Code', style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 10)),
-                  ],
-                ),
-              ),
+            const SizedBox(height: 14),
+            Field(
+              label: 'Custom amount (₱)',
+              mono: true,
+              controller: ctrl,
+              hint: '0.00',
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              onChanged: (v) =>
+                  setModal(() => amt = double.tryParse(v.trim()) ?? 0),
             ),
-            const SizedBox(height: 20),
-            Container(
+            const SizedBox(height: 6),
+            Btn.text(
+              'Confirm Cash In',
               width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.04),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white.withOpacity(0.08)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('ACCOUNT NAME', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 10, letterSpacing: 1.2)),
-                  const SizedBox(height: 2),
-                  Text(user.name.isNotEmpty ? user.name : 'Your Name', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 8),
-                  Text('ACCOUNT EMAIL', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 10, letterSpacing: 1.2)),
-                  const SizedBox(height: 2),
-                  Text(user.email.isNotEmpty ? user.email : 'your@email.com', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13)),
-                ],
-              ),
+              disabled: amt <= 0,
+              onTap: () {
+                ref.read(userProvider.notifier).topUp(amt);
+                Navigator.pop(ctx);
+                showToast(context, '${_peso(amt)} added to wallet');
+              },
             ),
-            const SizedBox(height: 8),
           ],
         ),
       ),
     );
   }
 
-  void _showHistoryModal(BuildContext context, UserState user) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => DraggableScrollableSheet(
-        initialChildSize: 0.7,
-        maxChildSize: 0.9,
-        minChildSize: 0.4,
-        builder: (ctx, scroll) => Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(0xFF120832), Color(0xFF0A0020)],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-            ),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-          ),
-          child: Column(
+  void _openSendSheet(UserState user) {
+    final toCtrl = TextEditingController();
+    final amtCtrl = TextEditingController();
+    final noteCtrl = TextEditingController();
+    showAppSheet(
+      context,
+      title: 'Send Money · P2P',
+      child: StatefulBuilder(
+        builder: (ctx, setModal) {
+          final n = double.tryParse(amtCtrl.text.trim()) ?? 0;
+          final exceeds = n > user.balance;
+          final canSend = toCtrl.text.trim().isNotEmpty && n > 0 && !exceeds;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const SizedBox(height: 8),
-              Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(2))),
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              Field(
+                label: 'Recipient email or phone',
+                controller: toCtrl,
+                hint: 'juan@email.com',
+                onChanged: (_) => setModal(() {}),
+              ),
+              Field(
+                label: 'Amount (₱)',
+                mono: true,
+                controller: amtCtrl,
+                hint: '0.00',
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                onChanged: (_) => setModal(() {}),
+              ),
+              Field(
+                label: 'Note',
+                controller: noteCtrl,
+                hint: 'Pamasahe / Sar-E split',
+                onChanged: (_) => setModal(() {}),
+              ),
+              if (exceeds)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    'Amount exceeds balance (${_peso(user.balance)})',
+                    textAlign: TextAlign.center,
+                    style: T.text(12, color: T.red400),
+                  ),
+                ),
+              Btn.text(
+                'Send via tap@tan',
+                width: double.infinity,
+                disabled: !canSend,
+                onTap: () {
+                  ref.read(userProvider.notifier).sendMoney(
+                        n,
+                        recipient: 'To ${toCtrl.text.trim()}',
+                        type: 'send',
+                      );
+                  Navigator.pop(ctx);
+                  showToast(context, 'Sent ${_peso(n)} via tap@tan');
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _openQrSheet(UserState user) {
+    int mode = 0; // 0 = Scan QR, 1 = My Receive QR
+    showAppSheet(
+      context,
+      title: 'QR Pay & Receive',
+      child: StatefulBuilder(
+        builder: (ctx, setModal) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Glass(
+              kind: GlassKind.pill,
+              radius: 16,
+              padding: const EdgeInsets.all(4),
+              child: Row(
+                children: [
+                  for (final entry in [(0, 'Scan Merchant QR'), (1, 'My Receive QR')])
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setModal(() => mode = entry.$1),
+                        child: Container(
+                          height: 36,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: mode == entry.$1
+                                ? T.white(.18)
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            entry.$2,
+                            style: T.text(
+                              12,
+                              w: T.w700,
+                              color:
+                                  mode == entry.$1 ? Colors.white : T.white(.5),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (mode == 0) ...[
+              Container(
+                height: 230,
+                decoration: BoxDecoration(
+                  color: T.blk(.55),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: T.white(.12)),
+                ),
+                child: Stack(
+                  alignment: Alignment.center,
                   children: [
-                    const Text('Transaction History', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
-                    Text('${user.transactions.length} entries', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12)),
+                    // Corner markers
+                    for (final align in [
+                      Alignment.topLeft,
+                      Alignment.topRight,
+                      Alignment.bottomLeft,
+                      Alignment.bottomRight,
+                    ])
+                      Align(
+                        alignment: align,
+                        child: Padding(
+                          padding: const EdgeInsets.all(18),
+                          child: Container(
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              border: Border(
+                                top: align.y < 0
+                                    ? const BorderSide(
+                                        color: T.cyan300, width: 2.5)
+                                    : BorderSide.none,
+                                bottom: align.y > 0
+                                    ? const BorderSide(
+                                        color: T.cyan300, width: 2.5)
+                                    : BorderSide.none,
+                                left: align.x < 0
+                                    ? const BorderSide(
+                                        color: T.cyan300, width: 2.5)
+                                    : BorderSide.none,
+                                right: align.x > 0
+                                    ? const BorderSide(
+                                        color: T.cyan300, width: 2.5)
+                                    : BorderSide.none,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    Container(
+                      width: 170,
+                      height: 2,
+                      decoration: BoxDecoration(
+                        color: T.cyan300,
+                        boxShadow: T.glow(T.cyan300, 12),
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 24,
+                      child: Text(
+                        'Align QR Ph / Merchant code inside frame',
+                        style: T.text(11.5, color: T.white(.45)),
+                      ),
+                    ),
                   ],
                 ),
               ),
-              Expanded(
-                child: ListView.separated(
-                  controller: scroll,
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  itemCount: user.transactions.isEmpty ? 1 : user.transactions.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
-                  itemBuilder: (_, i) {
-                    if (user.transactions.isEmpty) {
-                      return Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(40),
-                          child: Column(
-                            children: [
-                              Icon(LucideIcons.activity, size: 40, color: Colors.white.withOpacity(0.2)),
-                              const SizedBox(height: 8),
-                              Text('No transactions yet', style: TextStyle(color: Colors.white.withOpacity(0.4))),
-                            ],
+              const SizedBox(height: 14),
+              Btn.text(
+                'Simulate Merchant QR · Aling Nena\'s',
+                variant: BtnVariant.glass,
+                width: double.infinity,
+                onTap: () {
+                  Navigator.pop(ctx);
+                  showToast(context, 'Merchant QR detected · Aling Nena\'s');
+                },
+              ),
+            ] else ...[
+              Center(
+                child: Container(
+                  width: 164,
+                  height: 164,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: ui_card.CodeMark(
+                    qr: true,
+                    value: user.email.isNotEmpty ? user.email : user.cardId,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Glass(
+                radius: 18,
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('ACCOUNT NAME',
+                        style: T.mono(9.5, color: T.white(.45))),
+                    const SizedBox(height: 2),
+                    Text(
+                      user.name.isNotEmpty ? user.name : 'Tapat Member',
+                      style: T.text(15, w: T.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    Text('ACCOUNT EMAIL / ID',
+                        style: T.mono(9.5, color: T.white(.45))),
+                    const SizedBox(height: 2),
+                    Text(
+                      user.email.isNotEmpty ? user.email : user.cardId,
+                      style: T.mono(12, color: T.cyan300),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openHistorySheet(UserState user) {
+    showAppSheet(
+      context,
+      title: 'Transaction History (${user.transactions.length})',
+      tall: true,
+      child: user.transactions.isEmpty
+          ? Padding(
+              padding: const EdgeInsets.symmetric(vertical: 40),
+              child: Column(
+                children: [
+                  Icon(LucideIcons.activity, size: 40, color: T.white(.25)),
+                  const SizedBox(height: 8),
+                  Text('No transactions yet',
+                      style: T.text(13, color: T.white(.5))),
+                ],
+              ),
+            )
+          : Glass(
+              padding: EdgeInsets.zero,
+              child: Column(
+                children: [
+                  for (var i = 0; i < user.transactions.length; i++) ...[
+                    if (i > 0) Divider(height: 1, color: T.white(.08)),
+                    _buildTxRow(user.transactions[i], i),
+                  ],
+                ],
+              ),
+            ),
+    );
+  }
+
+  List<TransactionData> _filteredTransactions(UserState user) {
+    return user.transactions.where((t) {
+      switch (_filter) {
+        case 'nfc':
+          return t.type == 'nfc';
+        case 'sare':
+          return t.name.toLowerCase().contains('sar-e') ||
+              t.name.toLowerCase().contains('aling') ||
+              t.type == 'send';
+        case 'cashin':
+          return t.amount > 0;
+        default:
+          return true;
+      }
+    }).toList();
+  }
+
+  String _formatCompact(double v) {
+    if (v >= 1000000) return '${(v / 1000000).toStringAsFixed(1)}M';
+    if (v >= 1000) return '${(v / 1000).toStringAsFixed(1)}K';
+    return v.toStringAsFixed(2);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = ref.watch(userProvider);
+    final activeUiCard = _toUiCard(user.activeCard, user.cardId);
+    final holderUpper = user.name.trim().isNotEmpty
+        ? user.name.trim().toUpperCase()
+        : 'TAPAT MEMBER';
+    final firstName = user.name.trim().isNotEmpty
+        ? user.name.trim().split(RegExp(r'\s+')).first
+        : 'Member';
+    final initials = user.name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty)
+        .map((w) => w[0].toUpperCase())
+        .take(2)
+        .join();
+    final filteredList = _filteredTransactions(user);
+
+    return ListView(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, T.navBottomPad),
+      children: [
+        // ── 1. Top Greeting + Notification + Avatar ────────────────────────
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_greeting(), style: T.text(12, color: T.white(.55))),
+                Text(firstName, style: T.text(21, w: T.w800)),
+                const SizedBox(height: 4),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: T.op(T.emerald400, .15),
+                    borderRadius: BorderRadius.circular(99),
+                    border: Border.all(color: T.op(T.emerald300, .35)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(LucideIcons.badgeCheck,
+                          size: 12, color: T.emerald300),
+                      const SizedBox(width: 4),
+                      Text(
+                        'KYC Verified',
+                        style: T.text(10, w: T.w600, color: T.emerald300),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            Row(
+              children: [
+                PressScale(
+                  onTap: () {
+                    HapticFeedback.lightImpact();
+                    showToast(
+                      context,
+                      user.sarePendingOrder != null
+                          ? 'Pending Sar-E request: ${_peso(user.sarePendingOrder!.totalAmount)}'
+                          : 'No security alerts · 0 rejected MACs',
+                    );
+                  },
+                  child: Stack(
+                    children: [
+                      Glass(
+                        kind: GlassKind.pill,
+                        width: 40,
+                        height: 40,
+                        child: const Icon(LucideIcons.bell,
+                            size: 18, color: Colors.white),
+                      ),
+                      Positioned(
+                        top: 8,
+                        right: 9,
+                        child: Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: T.red400,
                           ),
                         ),
-                      );
-                    }
-                    final tx = user.transactions[i];
-                    return _buildTxRow(tx);
-                  },
+                      ),
+                    ],
+                  ),
                 ),
+                const SizedBox(width: 8),
+                PressScale(
+                  onTap: () => widget.onNavigateTab?.call('profile'),
+                  child: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: T.btnLiquidGradient,
+                      boxShadow: T.btnShadow,
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      initials.isEmpty ? 'U' : initials,
+                      style: T.text(13, w: T.w800),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+
+        // ── 2. Hero Card Tile + Wallet Balance + Arm CTA ───────────────────
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 260),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(30),
+            gradient: T.glassGradient,
+            border: Border.all(
+              color: user.cardArmed
+                  ? T.op(T.emerald300, .75)
+                  : T.glassBorder,
+              width: user.cardArmed ? 1.0 : 0.6,
+            ),
+            boxShadow: user.cardArmed
+                ? [
+                    BoxShadow(
+                        color: T.op(T.emerald, .32),
+                        blurRadius: 36,
+                        spreadRadius: 1),
+                  ]
+                : T.glassShadow,
+          ),
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              GestureDetector(
+                onTapDown: (_) => setState(() => _cardHovered = true),
+                onTapUp: (_) {
+                  setState(() => _cardHovered = false);
+                  widget.onNavigateTab?.call('cards');
+                },
+                onTapCancel: () => setState(() => _cardHovered = false),
+                child: TweenAnimationBuilder<Offset>(
+                  tween: Tween(
+                    begin: const Offset(5, -6),
+                    end: _cardHovered ? Offset.zero : const Offset(5, -6),
+                  ),
+                  duration: const Duration(milliseconds: 220),
+                  builder: (_, v, child) {
+                    return Transform(
+                      alignment: Alignment.center,
+                      transform: Matrix4.identity()
+                        ..setEntry(3, 2, 1 / 1000)
+                        ..rotateX(v.dx * math.pi / 180)
+                        ..rotateY(v.dy * math.pi / 180),
+                      child: child,
+                    );
+                  },
+                  child: ui_card.CardFace(
+                    card: activeUiCard,
+                    holder: holderUpper,
+                    tiltX: _cardHovered ? 0.15 : -0.2,
+                    tiltY: 0.1,
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Wallet balance',
+                            style: T.text(11, color: T.white(.50))),
+                        const SizedBox(height: 2),
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 220),
+                          child: Text(
+                            _hideBalance ? '₱ ••••••' : _peso(user.balance),
+                            key: ValueKey(_hideBalance),
+                            style: T.text(28, w: T.w800, height: 1.05),
+                          ),
+                        ),
+                      ],
+                    ),
+                    GlassIconBtn(
+                      icon:
+                          _hideBalance ? LucideIcons.eyeOff : LucideIcons.eye,
+                      size: 36,
+                      iconSize: 16,
+                      onTap: () =>
+                          setState(() => _hideBalance = !_hideBalance),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+                child: Row(
+                  children: [
+                    const Icon(LucideIcons.trendingUp,
+                        size: 12, color: T.emerald300),
+                    const SizedBox(width: 4),
+                    Text(
+                      'In +₱${_formatCompact(user.totalIncome)}',
+                      style: T.text(11, w: T.w600, color: T.emerald300),
+                    ),
+                    const SizedBox(width: 14),
+                    const Icon(LucideIcons.arrowUpRight,
+                        size: 12, color: T.red400),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Out ₱${_formatCompact(user.totalExpenses)}',
+                      style: T.text(11, w: T.w600, color: T.red400),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: !user.cardArmed
+                    ? Btn(
+                        width: double.infinity,
+                        onTap: widget.onArmCard,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: const [
+                            Icon(LucideIcons.nfc, size: 17),
+                            SizedBox(width: 8),
+                            Text('Arm Card for NFC Payment'),
+                          ],
+                        ),
+                      )
+                    : Row(
+                        children: [
+                          Container(
+                            height: 48,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: T.op(T.amber500, .15),
+                              borderRadius: BorderRadius.circular(99),
+                              border:
+                                  Border.all(color: T.op(T.amber300, .4)),
+                            ),
+                            child: Text(
+                              _mmss(_armedSecsLeft),
+                              style: T.mono(12, color: T.amber300),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Btn.text(
+                              'Tap to Pay Now',
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 12),
+                              onTap: () => widget.onOpenOverlay?.call('nfc'),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Btn.text(
+                            'Disarm',
+                            variant: BtnVariant.glass,
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 14),
+                            onTap: () {
+                              ref
+                                  .read(userProvider.notifier)
+                                  .completeTransaction();
+                              showToast(context, 'Card disarmed');
+                            },
+                          ),
+                        ],
+                      ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // ── 3. Quick Actions Row ───────────────────────────────────────────
+        Row(
+          children: [
+            _quickTile(LucideIcons.banknote, 'Cash In', _openCashInSheet),
+            const SizedBox(width: 10),
+            _quickTile(
+                LucideIcons.send, 'Send / P2P', () => _openSendSheet(user)),
+            const SizedBox(width: 10),
+            _quickTile(LucideIcons.nfc, 'Tap to Pay',
+                () => widget.onOpenOverlay?.call('nfc')),
+            const SizedBox(width: 10),
+            _quickTile(
+                LucideIcons.scanLine, 'Scan QR', () => _openQrSheet(user)),
+          ],
+        ),
+
+        // ── 4. Pending Sar-E Payment Banner ────────────────────────────────
+        if (user.sarePendingOrder != null) ...[
+          const SizedBox(height: 16),
+          Glass(
+            kind: GlassKind.tint,
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(LucideIcons.shoppingBasket,
+                        color: T.cyan200, size: 24),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Pending Sar-E order · ${user.sarePendingOrder!.merchant}',
+                            style: T.text(11, color: T.white(.60)),
+                          ),
+                          Text(
+                            _peso(user.sarePendingOrder!.totalAmount),
+                            style: T.text(18, w: T.w800),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Btn.text(
+                      'Pay with Card',
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      onTap: () => widget.onOpenOverlay?.call('nfc'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: LinkText(
+                    'Decline pending order',
+                    onTap: () =>
+                        ref.read(userProvider.notifier).clearSarEOrder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+
+        const SizedBox(height: 22),
+
+        // ── 5. Recent Activity + Filter Pills ──────────────────────────────
+        SectionHeader(
+          'Recent activity',
+          trailing: PressScale(
+            onTap: () => _openHistorySheet(user),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('See all', style: T.text(12, w: T.w600, color: T.cyan300)),
+                Icon(LucideIcons.chevronRight, size: 14, color: T.cyan300),
+              ],
+            ),
+          ),
+        ),
+        SizedBox(
+          height: 34,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            children: [
+              for (final f in [
+                ('all', 'All'),
+                ('nfc', 'NFC Tap'),
+                ('sare', 'Sar-E / P2P'),
+                ('cashin', 'Cash In'),
+              ])
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: PressScale(
+                    onTap: () => setState(() => _filter = f.$1),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: _filter == f.$1
+                            ? T.op(T.cyan400, .20)
+                            : T.white(.05),
+                        borderRadius: BorderRadius.circular(99),
+                        border: Border.all(
+                          color: _filter == f.$1
+                              ? T.op(T.cyan300, .60)
+                              : T.white(.10),
+                        ),
+                      ),
+                      child: Text(
+                        f.$2,
+                        style: T.text(
+                          12,
+                          w: T.w600,
+                          color:
+                              _filter == f.$1 ? T.cyan200 : T.white(.60),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Glass(
+          padding: EdgeInsets.zero,
+          child: filteredList.isEmpty
+              ? Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 26),
+                  child: Center(
+                    child: Text(
+                      'No transactions yet',
+                      style: T.text(12.5, color: T.white(.45)),
+                    ),
+                  ),
+                )
+              : Column(
+                  children: [
+                    for (var i = 0; i < math.min(filteredList.length, 6); i++) ...[
+                      if (i > 0) Divider(height: 1, color: T.white(.10)),
+                      _buildTxRow(filteredList[i], i),
+                    ],
+                  ],
+                ),
+        ),
+
+        const SizedBox(height: 16),
+
+        // ── 6. Sar-E Store Promo Tile ──────────────────────────────────────
+        PressScale(
+          onTap: () => widget.onNavigateTab?.call('sare'),
+          child: Glass(
+            kind: GlassKind.tint,
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: T.op(T.cyan500, .20),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child:
+                      const Icon(LucideIcons.store, color: T.cyan300, size: 22),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Shop on Sar-E Store', style: T.text(13.5, w: T.w700)),
+                      Text(
+                        'Sari-sari catalog with 1-tap Turing card checkout',
+                        style: T.text(11, color: T.white(.50)),
+                      ),
+                    ],
+                  ),
+                ),
+                Badge2(
+                  'OPEN',
+                  color: T.cyan400,
+                  textColor: T.cyan200,
+                  fontSize: 9.5,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _quickTile(IconData icon, String label, VoidCallback onTap) {
+    return Expanded(
+      child: PressScale(
+        scale: 0.93,
+        onTap: onTap,
+        child: Glass(
+          radius: 22,
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 22, color: T.cyan300),
+              const SizedBox(height: 6),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: T.text(10.5, w: T.w600),
               ),
             ],
           ),
@@ -321,848 +990,67 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  Widget _buildTxRow(TransactionData tx) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.07)),
-      ),
+  Widget _buildTxRow(TransactionData tx, int idx) {
+    final isIn = tx.amount > 0;
+    final macSuffix = ((0x8F2A + idx * 37) & 0xFFFF)
+        .toRadixString(16)
+        .toUpperCase()
+        .padLeft(4, '0');
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
           Container(
-            width: 40, height: 40,
+            width: 40,
+            height: 40,
             decoration: BoxDecoration(
-              color: tx.color.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(12),
+              shape: BoxShape.circle,
+              color: isIn ? T.op(T.emerald400, .15) : T.white(.10),
             ),
-            child: Icon(tx.icon, color: tx.color, size: 17),
+            child: Icon(
+              tx.type == 'nfc'
+                  ? LucideIcons.wifi
+                  : (isIn ? LucideIcons.arrowDownLeft : LucideIcons.arrowUpRight),
+              size: 16,
+              color: isIn ? T.emerald300 : T.white(.85),
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(tx.name, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-                Text(tx.time, style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11)),
+                Text(
+                  tx.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: T.text(13, w: T.w600),
+                ),
+                Text.rich(
+                  TextSpan(children: [
+                    TextSpan(
+                      text: '${tx.time} ',
+                      style: T.text(11, color: T.white(.45)),
+                    ),
+                    TextSpan(
+                      text: 'TM•$macSuffix',
+                      style: T.mono(10.5, color: T.op(T.cyan300, .80)),
+                    ),
+                  ]),
+                ),
               ],
             ),
           ),
           Text(
-            '${tx.amount > 0 ? "+" : ""}â‚±${tx.amount.abs().toStringAsFixed(2)}',
-            style: TextStyle(
-              fontSize: 14, fontWeight: FontWeight.w700,
-              color: tx.amount > 0 ? const Color(0xFF34D399) : const Color(0xFFF87171),
+            '${isIn ? '+' : ''}${_peso(tx.amount)}',
+            style: T.text(
+              13,
+              w: T.w700,
+              color: isIn ? T.emerald300 : Colors.white,
             ),
           ),
         ],
       ),
     );
   }
-
-  // â”€â”€â”€ Section builders â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-  Widget _buildStatusBanner(UserState user) {
-    final Color dotColor = user.sessionTxnDone
-        ? const Color(0xFFF59E0B)
-        : user.cardArmed
-            ? const Color(0xFF34D399)
-            : Colors.white.withOpacity(0.25);
-    final Color textColor = user.sessionTxnDone
-        ? const Color(0xFFF59E0B)
-        : user.cardArmed
-            ? const Color(0xFF34D399)
-            : Colors.white.withOpacity(0.35);
-    final Color borderColor = user.sessionTxnDone
-        ? const Color(0xFFF59E0B).withOpacity(0.3)
-        : user.cardArmed
-            ? const Color(0xFF34D399).withOpacity(0.3)
-            : Colors.white.withOpacity(0.07);
-    final String label = user.sessionTxnDone
-        ? 'NFC Card  ·  Transaction used — re-tap to rearm'
-        : user.cardArmed
-            ? 'NFC Card  ·  Armed — 1 transaction ready'
-            : 'NFC Card  ·  Not activated';
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-      decoration: BoxDecoration(
-        color: (user.cardArmed || user.sessionTxnDone)
-            ? dotColor.withOpacity(0.08)
-            : Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: borderColor),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 7, height: 7,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: dotColor,
-              boxShadow: (user.cardArmed || user.sessionTxnDone)
-                  ? [BoxShadow(color: dotColor, blurRadius: 6, spreadRadius: 1)]
-                  : null,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(label,
-                style: TextStyle(
-                    fontSize: 11, fontWeight: FontWeight.w600, color: textColor)),
-          ),
-          Icon(LucideIcons.wifi, size: 12, color: textColor),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildGreetingHeader(UserState user) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(_greeting(),
-                style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13)),
-            const SizedBox(height: 2),
-            Text(
-              user.name.isNotEmpty ? user.name : 'Welcome',
-              style: const TextStyle(
-                  color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800),
-            ),
-          ],
-        ),
-        Stack(
-          children: [
-            Container(
-              width: 42, height: 42,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withOpacity(0.07),
-                border: Border.all(color: const Color(0xFF0891B2).withOpacity(0.3)),
-              ),
-              child: Icon(LucideIcons.bell, size: 18, color: Colors.white.withOpacity(0.8)),
-            ),
-            Positioned(
-              top: 2, right: 2,
-              child: Container(
-                width: 10, height: 10,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: const Color(0xFF0891B2),
-                  border: Border.all(color: const Color(0xFF020B18), width: 1.5),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildEnableTransactionCTA() {
-    return GestureDetector(
-      onTap: widget.onArmCard,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 16),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0x700369A1), Color(0x600891B2), Color(0x5006B6D4)],
-            stops: [0.0, 0.5, 1.0],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFF0891B2).withOpacity(0.4)),
-          boxShadow: [
-            BoxShadow(
-                color: const Color(0xFF0369A1).withOpacity(0.22),
-                blurRadius: 24,
-                offset: const Offset(0, 6)),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 40, height: 40,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(13),
-                color: Colors.white.withOpacity(0.12),
-              ),
-              child: const Icon(LucideIcons.shield, size: 20, color: Colors.white),
-            ),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Enable Transaction',
-                      style: TextStyle(
-                          color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800)),
-                  SizedBox(height: 2),
-                  Text('Tap NFC card to arm for payment',
-                      style:
-                          TextStyle(color: Color(0x99FFFFFF), fontSize: 11)),
-                ],
-              ),
-            ),
-            Icon(LucideIcons.chevronRight,
-                size: 18, color: Colors.white.withOpacity(0.55)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBalanceCard(UserState user) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0x700369A1), Color(0x580891B2), Color(0x4006B6D4)],
-          stops: [0.0, 0.55, 1.0],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(26),
-        border: Border.all(color: const Color(0xFF0891B2).withOpacity(0.3)),
-        boxShadow: [
-          BoxShadow(
-              color: const Color(0xFF0369A1).withOpacity(0.22),
-              blurRadius: 36,
-              offset: const Offset(0, 8)),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Total Balance',
-                  style:
-                      TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
-              GestureDetector(
-                onTap: () => setState(() => _showBalance = !_showBalance),
-                child: Container(
-                  padding: const EdgeInsets.all(5),
-                  decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      color: Colors.white.withOpacity(0.08)),
-                  child: Icon(
-                      _showBalance ? LucideIcons.eye : LucideIcons.eyeOff,
-                      size: 14,
-                      color: Colors.white.withOpacity(0.5)),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 300),
-            child: Align(
-              key: ValueKey(_showBalance),
-              alignment: Alignment.centerLeft,
-              child: Text(
-                _showBalance
-                    ? '\u20b1 ${user.balance.toStringAsFixed(2).replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',')}'
-                    : '\u20b1 \u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022',
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 30,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -0.5),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Container(height: 1, color: Colors.white.withOpacity(0.1)),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              _buildBalanceStat(
-                  icon: LucideIcons.trendingUp,
-                  label: 'Income',
-                  value: '+\u20b1${_formatAmount(user.totalIncome)}',
-                  color: const Color(0xFF34D399)),
-              const SizedBox(width: 12),
-              Container(width: 1, height: 32, color: Colors.white.withOpacity(0.15)),
-              const SizedBox(width: 12),
-              _buildBalanceStat(
-                  icon: LucideIcons.arrowUpRight,
-                  label: 'Expenses',
-                  value: user.totalExpenses > 0
-                      ? '-\u20b1${_formatAmount(user.totalExpenses)}'
-                      : '\u20b10.00',
-                  color: const Color(0xFFF87171)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActiveCardRow(CardData card) {
-    return GestureDetector(
-      onTap: () => widget.onNavigateTab?.call('cards'),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: const Color(0xFF0369A1).withOpacity(0.10),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFF0891B2).withOpacity(0.25)),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 42, height: 42,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [card.colors[0], card.colors[1]],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(13),
-              ),
-              child: const Icon(LucideIcons.wifi, size: 17, color: Colors.white),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('${card.provider} Active · ${card.holderName}',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700),
-                      overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 2),
-                  Text('${card.cardNumber} \u00b7 Ready for NFC',
-                      style: TextStyle(
-                          color: Colors.white.withOpacity(0.45), fontSize: 11)),
-                ],
-              ),
-            ),
-            Container(
-              width: 8, height: 8,
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                color: Color(0xFF34D399),
-                boxShadow: [BoxShadow(color: Color(0xFF34D399), blurRadius: 6, spreadRadius: 1)],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Icon(LucideIcons.chevronRight,
-                size: 14, color: Colors.white.withOpacity(0.3)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildQuickActionsRow(BuildContext context, UserState user) {
-    final items = [
-      ('Send',    LucideIcons.arrowUpRight, const Color(0xFF0369A1), const Color(0xFF0284C7),
-          () => widget.onOpenOverlay?.call('send')),
-      ('Receive', LucideIcons.arrowDownLeft, const Color(0xFF0891B2), const Color(0xFF06B6D4),
-          () => _showReceiveModal(context, user)),
-      ('NFC Pay', LucideIcons.wifi,          const Color(0xFF0E7490), const Color(0xFF0891B2),
-          () => widget.onOpenOverlay?.call('nfc')),
-      ('Top Up',  LucideIcons.plus,          const Color(0xFF0F766E), const Color(0xFF14B8A6),
-          () => _showTopUpModal(context)),
-    ];
-    return Row(
-      children: List.generate(items.length, (i) {
-        final (label, icon, from, to, tap) = items[i];
-        return Expanded(
-          child: Padding(
-            padding: EdgeInsets.only(right: i < items.length - 1 ? 10 : 0),
-            child: _buildQuickAction(label, icon, from, to, tap),
-          ),
-        );
-      }),
-    );
-  }
-
-  Widget _buildSpendingSection(UserState user) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: Colors.white.withOpacity(0.07)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('Weekly Spending',
-                  style: TextStyle(
-                      color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0891B2).withOpacity(0.18),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                      color: const Color(0xFF0891B2).withOpacity(0.3)),
-                ),
-                child: const Text('This week',
-                    style: TextStyle(
-                        color: Color(0xFF38BDF8),
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          _buildMiniSpendingChart(user),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRecentActivity(BuildContext context, UserState user) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text('Recent Activity',
-                style: TextStyle(
-                    color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
-            GestureDetector(
-              onTap: () => _showHistoryModal(context, user),
-              child: Row(
-                children: [
-                  const Text('See all',
-                      style: TextStyle(color: Color(0xFF38BDF8), fontSize: 12)),
-                  const SizedBox(width: 2),
-                  Icon(LucideIcons.chevronRight,
-                      size: 13, color: Colors.white.withOpacity(0.4)),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        if (user.transactions.isEmpty)
-          Container(
-            padding:
-                const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.03),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.white.withOpacity(0.06)),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(LucideIcons.activity,
-                    size: 36, color: Colors.white.withOpacity(0.18)),
-                const SizedBox(height: 10),
-                Text('No transactions yet',
-                    style: TextStyle(
-                        color: Colors.white.withOpacity(0.4), fontSize: 13)),
-                const SizedBox(height: 4),
-                Text('Start by topping up or sending money',
-                    style: TextStyle(
-                        color: Colors.white.withOpacity(0.22), fontSize: 11)),
-              ],
-            ),
-          )
-        else
-          ...user.transactions.take(3).map((tx) => Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _buildTxRow(tx),
-              )),
-      ],
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final user = ref.watch(userProvider);
-    final activeCard = user.activeCard;
-
-    return SafeArea(
-      bottom: false,
-      child: ListView(
-        physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 130),
-        children: [
-
-          // 0. Sar-E Pending Order banner (if any)
-          if (user.sarePendingOrder != null) ...[
-            _buildSarEPendingOrderBanner(context, user.sarePendingOrder!),
-            const SizedBox(height: 14),
-          ],
-
-          // 1. Java Card status chip
-          _buildStatusBanner(user),
-          const SizedBox(height: 16),
-
-          // 2. Greeting + bell
-          _buildGreetingHeader(user),
-          const SizedBox(height: 16),
-
-          // 3. Enable Transaction CTA â€” only when not armed
-          if (!user.cardArmed) ...[
-            _buildEnableTransactionCTA(),
-            const SizedBox(height: 14),
-          ],
-
-          // 4. Balance card
-          _buildBalanceCard(user),
-          const SizedBox(height: 14),
-
-          // 5. Active card pill â€” only when a card exists
-          if (activeCard != null) ...[
-            _buildActiveCardRow(activeCard),
-            const SizedBox(height: 14),
-          ],
-
-          // 6. Quick actions (Send / Receive / NFC Pay / Top Up)
-          _buildQuickActionsRow(context, user),
-          const SizedBox(height: 16),
-
-          // 7. Weekly spending chart
-          _buildSpendingSection(user),
-          const SizedBox(height: 16),
-
-          // 8. Recent activity list + empty state
-          _buildRecentActivity(context, user),
-          const SizedBox(height: 16),
-
-          // 9. Sar-E Store Promo card
-          _buildSarEPromoCard(context),
-
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBalanceStat({required IconData icon, required String label, required String value, required Color color}) {
-    return Row(
-      children: [
-        Container(
-          width: 28, height: 28,
-          decoration: BoxDecoration(shape: BoxShape.circle, color: color.withOpacity(0.18)),
-          child: Icon(icon, size: 13, color: color),
-        ),
-        const SizedBox(width: 8),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label, style: TextStyle(color: Colors.white.withOpacity(0.45), fontSize: 10)),
-            Text(value, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w700)),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildQuickAction(String label, IconData icon, Color from, Color to, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [from.withOpacity(0.3), to.withOpacity(0.2)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFF0891B2).withOpacity(0.2)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 38, height: 38,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                color: Colors.white.withOpacity(0.10),
-              ),
-              child: Icon(icon, size: 17, color: Colors.white),
-            ),
-            const SizedBox(height: 6),
-            Text(label,
-                style: TextStyle(
-                    color: Colors.white.withOpacity(0.75),
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600)),
-          ],
-        ),
-      ),
-    );
-  }
-
-
-  Widget _buildMiniSpendingChart(UserState user) {
-    // Derive spending from last 7 days grouped by day-of-week
-    final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    final amounts = <double>[0, 0, 0, 0, 0, 0, 0];
-
-    // Use real transaction data only
-    for (final tx in user.transactions) {
-      if (tx.amount < 0) {
-        final dayIdx = DateTime.now().weekday - 1;
-        if (dayIdx >= 0 && dayIdx < 7) {
-          amounts[dayIdx] += tx.amount.abs();
-        }
-      }
-    }
-
-    final maxAmount = amounts.reduce((a, b) => a > b ? a : b);
-
-    return SizedBox(
-      height: 75,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: List.generate(7, (i) {
-          final barHeight = maxAmount > 0 ? (amounts[i] / maxAmount) * 60.0 : 10.0;
-          return Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                Container(
-                  height: barHeight,
-                  margin: const EdgeInsets.symmetric(horizontal: 2),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF0369A1), Color(0xFF0891B2)],
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                    ),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(days[i], style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 9)),
-              ],
-            ),
-          );
-        }),
-      ),
-    );
-  }
-
-  String _formatAmount(double amount) {
-    if (amount >= 1000000) return '${(amount / 1000000).toStringAsFixed(1)}M';
-    if (amount >= 1000) return '${(amount / 1000).toStringAsFixed(1)}K';
-    return amount.toStringAsFixed(2);
-  }
-
-  Widget _buildSarEPendingOrderBanner(BuildContext context, SarEPendingOrder order) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF0369A1), Color(0xFF0891B2), Color(0xFF06B6D4)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.5), width: 1.5),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF0891B2).withValues(alpha: 0.35),
-            blurRadius: 20,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(LucideIcons.store, color: Colors.white, size: 20),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Sar-E Payment Request',
-                      style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
-                    ),
-                    Text(
-                      order.merchant,
-                      style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 11),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF59E0B),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Text(
-                  'Pending',
-                  style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    '${order.items.fold<int>(0, (s, i) => s + i.qty)} item(s) (${order.items.map((i) => "${i.qty}x ${i.name}").join(", ")})',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 11),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '₱${order.totalAmount.toStringAsFixed(2)}',
-                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                flex: 2,
-                child: GestureDetector(
-                  onTap: () => widget.onOpenOverlay?.call('nfc'),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(LucideIcons.wifi, color: Color(0xFF0369A1), size: 16),
-                        SizedBox(width: 6),
-                        Text(
-                          'Approve & Pay (Tapat)',
-                          style: TextStyle(color: Color(0xFF0369A1), fontSize: 12, fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              GestureDetector(
-                onTap: () => ref.read(userProvider.notifier).clearSarEOrder(),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
-                  ),
-                  child: const Text(
-                    'Decline',
-                    style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSarEPromoCard(BuildContext context) {
-    return GestureDetector(
-      onTap: () => widget.onNavigateTab?.call('sare'),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              const Color(0xFF0369A1).withValues(alpha: 0.25),
-              const Color(0xFF0891B2).withValues(alpha: 0.12),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFF0891B2).withValues(alpha: 0.35)),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 44, height: 44,
-              decoration: BoxDecoration(
-                color: const Color(0xFF0891B2).withValues(alpha: 0.25),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Icon(LucideIcons.store, color: Color(0xFF38BDF8), size: 22),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Shop on Sar-E Store',
-                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'Sari-sari store catalog with 1-tap card checkout',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 11),
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0891B2).withValues(alpha: 0.25),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFF0891B2).withValues(alpha: 0.4)),
-              ),
-              child: const Row(
-                children: [
-                  Text('Open', style: TextStyle(color: Color(0xFF38BDF8), fontSize: 11, fontWeight: FontWeight.bold)),
-                  SizedBox(width: 2),
-                  Icon(LucideIcons.chevronRight, size: 12, color: Color(0xFF38BDF8)),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
 }

@@ -41,7 +41,7 @@ void main() {
       expect(infoPlist.existsSync(), isTrue);
       final content = infoPlist.readAsStringSync();
 
-      expect(content, contains('<string>tap@tan</string>'));
+      expect(content, contains('<string>tap@tan v2</string>'));
       expect(content, contains('<key>NFCReaderUsageDescription</key>'));
       expect(
         content,

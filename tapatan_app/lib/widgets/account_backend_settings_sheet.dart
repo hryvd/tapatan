@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../services/account_backend_service.dart';
+import '../ui/tokens.dart';
+import '../ui/widgets.dart';
 import '../utils/lucide_icons.dart';
 
 /// Configurable modal bottom sheet for Bantay / tap@tan Account Management Backend
@@ -112,14 +114,7 @@ class _AccountBackendSettingsSheetState
     await AccountBackendService.updateConfig(next);
     if (!mounted) return;
     Navigator.of(context).pop();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Account management rules saved.'),
-        backgroundColor: const Color(0xFF0369A1),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
+    showToast(context, 'Account management rules saved');
   }
 
   @override
@@ -128,349 +123,226 @@ class _AccountBackendSettingsSheetState
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
-      child: Container(
+      child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.86,
+          maxHeight: MediaQuery.of(context).size.height * 0.88,
         ),
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF041E35), Color(0xFF020B18)],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-        ),
-        padding: const EdgeInsets.fromLTRB(22, 14, 22, 24),
-        child: _loading
-            ? const SizedBox(
-                height: 180,
-                child: Center(
-                  child: CircularProgressIndicator(color: Color(0xFF38BDF8)),
+        child: Material(
+          type: MaterialType.transparency,
+          child: Glass(
+            kind: GlassKind.strong,
+            borderRadius:
+                const BorderRadius.vertical(top: Radius.circular(T.rSheet)),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Grabber handle
+                Container(
+                  margin: const EdgeInsets.only(top: 8),
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: T.white(.3),
+                    borderRadius: BorderRadius.circular(99),
+                  ),
                 ),
-              )
-            : SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 42,
-                        height: 4,
+                // Header
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 38,
+                        height: 38,
                         decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(2),
+                          color: T.op(T.cyan600, .2),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: T.op(T.cyan400, .3),
+                            width: .5,
+                          ),
+                        ),
+                        child: const Icon(
+                          LucideIcons.shieldCheck,
+                          color: T.cyan300,
+                          size: 20,
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Container(
-                          width: 38,
-                          height: 38,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF0891B2).withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Icon(
-                            LucideIcons.shieldCheck,
-                            color: Color(0xFF38BDF8),
-                            size: 20,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Account Management Backend',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              Text(
-                                '$_savedAccountCount persistent account(s) stored in database',
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.5),
-                                  fontSize: 11.5,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 18),
-
-                    // Remote HTTP Backend Sync toggle + URL
-                    _buildToggleTile(
-                      title: 'Sync with Remote Node Backend',
-                      subtitle:
-                          'Mirror local persistent DB with tapatan_backend REST API',
-                      value: _useRemote,
-                      onChanged: (v) => setState(() => _useRemote = v),
-                    ),
-                    if (_useRemote) ...[
-                      const SizedBox(height: 10),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.06),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: const Color(0xFF0891B2).withValues(alpha: 0.35),
-                          ),
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 2),
-                        child: Row(
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _urlCtrl,
-                                style: const TextStyle(
-                                    color: Colors.white, fontSize: 13.5),
-                                decoration: InputDecoration(
-                                  hintText:
-                                      'http://192.168.1.100:4180 (or 127.0.0.1:4180 / 10.0.2.2:4180)',
-                                  hintStyle: TextStyle(
-                                    color: Colors.white.withValues(alpha: 0.3),
-                                    fontSize: 12.5,
-                                  ),
-                                  border: InputBorder.none,
-                                ),
-                              ),
+                            Text(
+                              'Account Backend & Rules',
+                              style: T.text(16, w: T.w700),
                             ),
-                            TextButton(
-                              onPressed: _testing ? null : _testBackend,
-                              child: Text(
-                                _testing ? 'Testing...' : 'Test',
-                                style: const TextStyle(
-                                  color: Color(0xFF38BDF8),
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 12,
-                                ),
-                              ),
+                            Text(
+                              '$_savedAccountCount persistent account(s) stored in database',
+                              style: T.caption,
                             ),
                           ],
                         ),
                       ),
-                      if (_statusMsg != null) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          _statusMsg!,
-                          style: TextStyle(
-                            color: _statusError
-                                ? const Color(0xFFF87171)
-                                : const Color(0xFF34D399),
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
+                      GlassIconBtn(
+                        icon: LucideIcons.x,
+                        onTap: () => Navigator.of(context).maybePop(),
+                      ),
                     ],
-
-                    const SizedBox(height: 16),
-                    Text(
-                      'CONFIGURABLE ACCOUNT RULES',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.45),
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-
-                    // Starting Wallet Balance
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.04),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.08)),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Default Starting Balance (PHP)',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                Text(
-                                  'Initial wallet balance for newly created accounts',
-                                  style: TextStyle(
-                                    color: Colors.white.withValues(alpha: 0.45),
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          SizedBox(
-                            width: 96,
-                            child: TextField(
-                              controller: _balanceCtrl,
-                              keyboardType: TextInputType.number,
-                              textAlign: TextAlign.right,
-                              style: const TextStyle(
-                                color: Color(0xFF38BDF8),
-                                fontWeight: FontWeight.w800,
-                                fontSize: 14,
-                              ),
-                              decoration: InputDecoration(
-                                prefixText: '₱',
-                                prefixStyle: const TextStyle(
-                                  color: Color(0xFF38BDF8),
-                                  fontWeight: FontWeight.w700,
-                                ),
-                                isDense: true,
-                                contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 8),
-                                filled: true,
-                                fillColor: Colors.white.withValues(alpha: 0.06),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                  borderSide: BorderSide.none,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-
-                    _buildToggleTile(
-                      title: 'Require PIN on Email Sign-In',
-                      subtitle:
-                          'Verify salted SHA-256 PIN hash when logging into stored accounts',
-                      value: _requirePinOnLogin,
-                      onChanged: (v) => setState(() => _requirePinOnLogin = v),
-                    ),
-                    const SizedBox(height: 8),
-
-                    _buildToggleTile(
-                      title: 'Strict Card-to-Account Binding',
-                      subtitle:
-                          'NFC tap sign-in resolves strictly to bound database account',
-                      value: _strictCardBinding,
-                      onChanged: (v) => setState(() => _strictCardBinding = v),
-                    ),
-                    const SizedBox(height: 8),
-
-                    _buildToggleTile(
-                      title: 'Allow Card Rebind on New Signup',
-                      subtitle:
-                          'Allow re-provisioning a Tapat JCOP4 card to a new account',
-                      value: _allowCardRebind,
-                      onChanged: (v) => setState(() => _allowCardRebind = v),
-                    ),
-                    const SizedBox(height: 8),
-
-                    _buildToggleTile(
-                      title: 'Sync Card Holder Name with Account',
-                      subtitle:
-                          'Always display the authenticated user\'s real name on cards',
-                      value: _syncCardHolderName,
-                      onChanged: (v) =>
-                          setState(() => _syncCardHolderName = v),
-                    ),
-                    const SizedBox(height: 20),
-
-                    GestureDetector(
-                      onTap: _saveConfig,
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 15),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF0369A1), Color(0xFF0891B2)],
-                          ),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: const Center(
-                          child: Text(
-                            'Save Account Configuration',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 14.5,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-      ),
-    );
-  }
+                // Content
+                Flexible(
+                  child: _loading
+                      ? const SizedBox(
+                          height: 180,
+                          child: Center(
+                            child:
+                                CircularProgressIndicator(color: T.cyan400),
+                          ),
+                        )
+                      : SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Remote Node Backend Sync Toggle
+                              Toggle(
+                                on: _useRemote,
+                                onChanged: (v) =>
+                                    setState(() => _useRemote = v),
+                                label: 'Sync with Remote Node Backend',
+                                hint:
+                                    'Mirror local persistent DB with tapatan_backend REST API',
+                              ),
+                              if (_useRemote) ...[
+                                const SizedBox(height: 8),
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: Field(
+                                        label: 'Backend REST URL',
+                                        controller: _urlCtrl,
+                                        mono: true,
+                                        hint: 'http://192.168.1.100:4180',
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 20),
+                                      child: Btn(
+                                        variant: BtnVariant.glass,
+                                        onTap: _testing ? null : _testBackend,
+                                        disabled: _testing,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 14),
+                                        child: Text(
+                                          _testing ? 'Testing...' : 'Test',
+                                          style: T.btn.copyWith(
+                                            color: T.cyan300,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                if (_statusMsg != null) ...[
+                                  Padding(
+                                    padding: const EdgeInsets.only(
+                                        left: 4, bottom: 8),
+                                    child: Text(
+                                      _statusMsg!,
+                                      style: T.text(
+                                        11.5,
+                                        w: T.w600,
+                                        color: _statusError
+                                            ? T.red400
+                                            : T.emerald400,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
 
-  Widget _buildToggleTile({
-    required String title,
-    required String subtitle,
-    required bool value,
-    required ValueChanged<bool> onChanged,
-  }) {
-    return GestureDetector(
-      onTap: () => onChanged(!value),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.04),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.45),
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
-              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                'CONFIGURABLE ACCOUNT RULES',
+                                style: T.mono(
+                                  10.5,
+                                  w: T.w700,
+                                  color: T.white(.45),
+                                  ls: 1.2,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+
+                              // Default starting balance field
+                              Field(
+                                label: 'Default Starting Balance (PHP)',
+                                controller: _balanceCtrl,
+                                keyboardType: TextInputType.number,
+                                hint: '5000',
+                                suffix: Padding(
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: Text(
+                                    'PHP',
+                                    style: T.mono(12,
+                                        w: T.w700, color: T.cyan300),
+                                  ),
+                                ),
+                              ),
+
+                              Toggle(
+                                on: _requirePinOnLogin,
+                                onChanged: (v) =>
+                                    setState(() => _requirePinOnLogin = v),
+                                label: 'Require PIN on Email Sign-In',
+                                hint:
+                                    'Verify salted SHA-256 PIN hash when logging into stored accounts',
+                              ),
+                              Toggle(
+                                on: _strictCardBinding,
+                                onChanged: (v) =>
+                                    setState(() => _strictCardBinding = v),
+                                label: 'Strict Card-to-Account Binding',
+                                hint:
+                                    'NFC tap sign-in resolves strictly to bound database account',
+                              ),
+                              Toggle(
+                                on: _allowCardRebind,
+                                onChanged: (v) =>
+                                    setState(() => _allowCardRebind = v),
+                                label: 'Allow Card Rebind on New Signup',
+                                hint:
+                                    'Allow re-provisioning a Tapat JCOP4 card to a new account',
+                              ),
+                              Toggle(
+                                on: _syncCardHolderName,
+                                onChanged: (v) =>
+                                    setState(() => _syncCardHolderName = v),
+                                label: 'Sync Card Holder Name with Account',
+                                hint:
+                                    "Always display the authenticated user's real name on cards",
+                              ),
+
+                              const SizedBox(height: 20),
+                              Btn.text(
+                                'Save Account Configuration',
+                                variant: BtnVariant.primary,
+                                width: double.infinity,
+                                onTap: _saveConfig,
+                              ),
+                            ],
+                          ),
+                        ),
+                ),
+              ],
             ),
-            const SizedBox(width: 10),
-            Switch(
-              value: value,
-              activeThumbColor: const Color(0xFF38BDF8),
-              activeTrackColor: const Color(0xFF0891B2).withValues(alpha: 0.5),
-              onChanged: onChanged,
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 }
-

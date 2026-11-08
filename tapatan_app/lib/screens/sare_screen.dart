@@ -1,31 +1,128 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../utils/lucide_icons.dart';
 import '../providers/user_provider.dart';
+import '../ui/tokens.dart';
+import '../ui/widgets.dart';
+import '../utils/lucide_icons.dart';
 
-// ── Product Model ─────────────────────────────────────────────────────────
+// ── Models & Catalog (1:1 with SarEScreen.tsx) ──────────────────────────────
 
 class SarEProduct {
+  final String id;
   final String name;
+  final String emoji;
   final double price;
+  final int stock;
   final String category;
 
-  const SarEProduct(this.name, this.price, this.category);
+  const SarEProduct({
+    required this.id,
+    required this.name,
+    required this.emoji,
+    required this.price,
+    required this.stock,
+    required this.category,
+  });
 }
 
-const _products = [
-  SarEProduct('Kopiko Coffee 3-in-1 (10 sachets)', 55.0, 'kopiko'),
-  SarEProduct('Lucky Me Pancit Canton', 15.0, 'noodles'),
-  SarEProduct('San Miguel Pale Pilsen (6-pack)', 155.0, 'beer'),
-  SarEProduct('Great Taste White Coffee', 18.0, 'coffee'),
-  SarEProduct('Bear Brand Sterilized Milk', 95.0, 'milk'),
-  SarEProduct('Boy Bawang (Big, 3 flavors)', 45.0, 'snack'),
-  SarEProduct('Piattos Cheese 85g', 38.0, 'chips'),
-  SarEProduct('Skyflakes Crackers (10pcs)', 22.0, 'crackers'),
+const kSarEProducts = [
+  SarEProduct(
+    id: 'p1',
+    name: 'Nescafé 3-in-1',
+    emoji: '☕',
+    price: 9.0,
+    stock: 40,
+    category: 'Snacks & Drinks',
+  ),
+  SarEProduct(
+    id: 'p2',
+    name: 'Piattos Cheese',
+    emoji: '🥔',
+    price: 25.0,
+    stock: 18,
+    category: 'Snacks & Drinks',
+  ),
+  SarEProduct(
+    id: 'p3',
+    name: 'Coke Mismo',
+    emoji: '🥤',
+    price: 22.0,
+    stock: 6,
+    category: 'Snacks & Drinks',
+  ),
+  SarEProduct(
+    id: 'p4',
+    name: 'Skyflakes',
+    emoji: '🍘',
+    price: 8.0,
+    stock: 30,
+    category: 'Snacks & Drinks',
+  ),
+  SarEProduct(
+    id: 'p5',
+    name: 'Jasmine Rice 1kg',
+    emoji: '🍚',
+    price: 58.0,
+    stock: 12,
+    category: 'Pantry',
+  ),
+  SarEProduct(
+    id: 'p6',
+    name: 'Itlog (6 pcs)',
+    emoji: '🥚',
+    price: 54.0,
+    stock: 4,
+    category: 'Pantry',
+  ),
+  SarEProduct(
+    id: 'p7',
+    name: 'Lucky Me Pancit',
+    emoji: '🍜',
+    price: 16.0,
+    stock: 50,
+    category: 'Pantry',
+  ),
+  SarEProduct(
+    id: 'p8',
+    name: 'Datu Puti Suka',
+    emoji: '🍶',
+    price: 19.0,
+    stock: 14,
+    category: 'Pantry',
+  ),
+  SarEProduct(
+    id: 'p9',
+    name: 'Globe Load ₱50',
+    emoji: '📱',
+    price: 50.0,
+    stock: 99,
+    category: 'Load & Bills',
+  ),
+  SarEProduct(
+    id: 'p10',
+    name: 'Meralco Bill Pay',
+    emoji: '💡',
+    price: 100.0,
+    stock: 99,
+    category: 'Load & Bills',
+  ),
 ];
 
-// ── Sar-E Screen ──────────────────────────────────────────────────────────
+const kSarEStores = [
+  "Aling Nena's Sari-Sari",
+  'Campus Coop',
+  'Tapat Express',
+];
+
+const kSarECategories = [
+  'All',
+  'Snacks & Drinks',
+  'Pantry',
+  'Load & Bills',
+];
+
+// ── Screen ──────────────────────────────────────────────────────────────────
 
 class SarEScreen extends ConsumerStatefulWidget {
   final VoidCallback onNavigateHome;
@@ -42,25 +139,31 @@ class SarEScreen extends ConsumerStatefulWidget {
 }
 
 class _SarEScreenState extends ConsumerState<SarEScreen> {
-  // qty per product index
-  final Map<int, int> _cart = {};
-
-  static const _teal = Color(0xFF06B6D4);
-  static const _amber = Color(0xFFF59E0B);
+  final Map<String, int> _cart = {};
+  int _selectedStore = 0;
+  String _selectedCategory = 'All';
+  bool _menuOpen = false;
 
   int get _cartItemCount => _cart.values.fold(0, (a, b) => a + b);
+
   double get _cartTotal {
     double total = 0;
-    _cart.forEach((i, qty) => total += _products[i].price * qty);
+    _cart.forEach((id, qty) {
+      final p = kSarEProducts.firstWhere((item) => item.id == id);
+      total += p.price * qty;
+    });
     return total;
   }
 
-  void _increment(int i) => setState(() => _cart[i] = (_cart[i] ?? 0) + 1);
-  void _decrement(int i) {
-    if ((_cart[i] ?? 0) <= 0) return;
+  void _modifyQty(String id, int delta) {
+    final current = _cart[id] ?? 0;
+    final next = current + delta;
     setState(() {
-      _cart[i] = _cart[i]! - 1;
-      if (_cart[i] == 0) _cart.remove(i);
+      if (next <= 0) {
+        _cart.remove(id);
+      } else {
+        _cart[id] = next;
+      }
     });
   }
 
@@ -68,23 +171,24 @@ class _SarEScreenState extends ConsumerState<SarEScreen> {
     if (_cartItemCount == 0) return;
 
     final items = _cart.entries.map((e) {
-      final p = _products[e.key];
+      final p = kSarEProducts.firstWhere((item) => item.id == e.key);
       return SarECartItem(name: p.name, price: p.price, qty: e.value);
     }).toList();
 
     final order = SarEPendingOrder(
       orderId: 'SARE-${DateTime.now().millisecondsSinceEpoch}',
-      merchant: 'Sarisari ni Aling Nena',
+      merchant: kSarEStores[_selectedStore],
       items: items,
       totalAmount: _cartTotal,
     );
 
     ref.read(userProvider.notifier).setSarEOrder(order);
 
-    // Clear cart
-    setState(() => _cart.clear());
+    setState(() {
+      _cart.clear();
+      _menuOpen = false;
+    });
 
-    // Immediately trigger automatic NFC card checkout & payment approval
     if (widget.onCheckoutWithCard != null) {
       widget.onCheckoutWithCard!();
     } else {
@@ -95,89 +199,211 @@ class _SarEScreenState extends ConsumerState<SarEScreen> {
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(userProvider);
-    final bottomPad = MediaQuery.of(context).padding.bottom;
+    final filtered = kSarEProducts
+        .where(
+          (p) => _selectedCategory == 'All' || p.category == _selectedCategory,
+        )
+        .toList();
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: SafeArea(
-        bottom: false,
+    return SafeArea(
+      bottom: false,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () {
+          if (_menuOpen) setState(() => _menuOpen = false);
+        },
         child: Stack(
           children: [
-            // Product list
             CustomScrollView(
               physics: const BouncingScrollPhysics(),
               slivers: [
-                // ── Header ─────────────────────────────────────────────
+                // ── Header & Balance ──────────────────────────────────────
                 SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
+                    padding: const EdgeInsets.fromLTRB(T.screenPad, 8, T.screenPad, 12),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Container(
-                              width: 48, height: 48,
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [Color(0xFF0369A1), Color(0xFF0891B2)],
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                ),
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              child: const Icon(LucideIcons.store, color: Colors.white, size: 26),
-                            ),
-                            const SizedBox(width: 14),
-                            const Expanded(
+                            Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text('Sar-E Store', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-                                  Text('Sarisari ni Aling Nena', style: TextStyle(color: Color(0xFF38BDF8), fontSize: 12)),
+                                  // Store selector dropdown button
+                                  PressScale(
+                                    onTap: () => setState(() => _menuOpen = !_menuOpen),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Flexible(
+                                          child: Text(
+                                            kSarEStores[_selectedStore],
+                                            style: T.text(20, w: T.w800, color: Colors.white),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Icon(
+                                          _menuOpen ? LucideIcons.chevronUp : LucideIcons.chevronDown,
+                                          size: 16,
+                                          color: T.white(0.6),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    'Neighborhood store · NFC checkout',
+                                    style: T.text(12, color: T.white(0.45)),
+                                  ),
                                 ],
                               ),
                             ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: _teal.withOpacity(0.14),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: _teal.withOpacity(0.35)),
-                              ),
+                            const SizedBox(width: 8),
+
+                            // Balance pill
+                            Glass(
+                              kind: GlassKind.pill,
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.end,
+                                mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Text(
-                                    'Available Money',
-                                    style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 9),
-                                  ),
+                                  Text('Available', style: T.caption.copyWith(fontSize: 9)),
                                   Text(
                                     '₱${user.balance.toStringAsFixed(2)}',
-                                    style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 13, fontWeight: FontWeight.bold),
+                                    style: T.mono(12, w: T.w700, color: T.cyan300),
                                   ),
                                 ],
                               ),
+                            ),
+                            const SizedBox(width: 8),
+
+                            // Shopping basket badge button
+                            Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                Glass(
+                                  kind: GlassKind.pill,
+                                  width: 44,
+                                  height: 44,
+                                  child: Center(
+                                    child: Icon(
+                                      LucideIcons.shoppingBasket,
+                                      size: 20,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                                if (_cartItemCount > 0)
+                                  Positioned(
+                                    top: -3,
+                                    right: -3,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: T.cyan400,
+                                        borderRadius: BorderRadius.circular(999),
+                                        boxShadow: T.glow(T.cyan400, 8),
+                                      ),
+                                      child: Text(
+                                        '$_cartItemCount',
+                                        style: T.mono(11, w: T.w800, color: T.bg),
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
                           ],
                         ),
-                        const SizedBox(height: 12),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: _amber.withOpacity(0.08),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: _amber.withOpacity(0.25)),
+
+                        // Store dropdown popup
+                        if (_menuOpen) ...[
+                          const SizedBox(height: 8),
+                          Glass(
+                            kind: GlassKind.strong,
+                            radius: T.rStrong,
+                            padding: const EdgeInsets.all(6),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                for (int i = 0; i < kSarEStores.length; i++)
+                                  PressScale(
+                                    onTap: () {
+                                      setState(() {
+                                        _selectedStore = i;
+                                        _menuOpen = false;
+                                      });
+                                    },
+                                    child: Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                      decoration: BoxDecoration(
+                                        color: _selectedStore == i ? T.white(0.10) : Colors.transparent,
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              kSarEStores[i],
+                                              style: T.text(
+                                                13,
+                                                w: _selectedStore == i ? T.w700 : T.w500,
+                                                color: _selectedStore == i ? T.cyan300 : Colors.white,
+                                              ),
+                                            ),
+                                          ),
+                                          if (_selectedStore == i)
+                                            Icon(LucideIcons.check, size: 16, color: T.cyan300),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
+                        ],
+
+                        const SizedBox(height: 14),
+
+                        // Category filter pills
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          physics: const BouncingScrollPhysics(),
                           child: Row(
-                            children: [
-                              Icon(LucideIcons.creditCard, size: 14, color: _amber),
-                              const SizedBox(width: 8),
-                              const Text(
-                                'Pay securely with your Tapat Card',
-                                style: TextStyle(color: Color(0xFFF59E0B), fontSize: 12, fontWeight: FontWeight.w500),
-                              ),
-                            ],
+                            children: kSarECategories.map((cat) {
+                              final isSelected = _selectedCategory == cat;
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: PressScale(
+                                  onTap: () => setState(() => _selectedCategory = cat),
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 150),
+                                    height: 32,
+                                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color: isSelected ? T.op(T.cyan400, 0.20) : T.white(0.05),
+                                      borderRadius: BorderRadius.circular(999),
+                                      border: Border.all(
+                                        color: isSelected ? T.op(T.cyan300, 0.60) : T.white(0.10),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      cat,
+                                      style: T.text(
+                                        12,
+                                        w: T.w600,
+                                        color: isSelected ? T.cyan200 : T.white(0.60),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }).toList(),
                           ),
                         ),
                       ],
@@ -185,292 +411,220 @@ class _SarEScreenState extends ConsumerState<SarEScreen> {
                   ),
                 ),
 
-                // ── Product list ────────────────────────────────────────
+                // ── 2-Column Product Grid ─────────────────────────────────
                 SliverPadding(
-                  padding: EdgeInsets.fromLTRB(24, 0, 24, bottomPad + 120),
-                  sliver: SliverList(
+                  padding: const EdgeInsets.fromLTRB(
+                    T.screenPad,
+                    4,
+                    T.screenPad,
+                    T.navBottomPad + 20,
+                  ),
+                  sliver: SliverGrid(
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      crossAxisSpacing: 12,
+                      mainAxisSpacing: 12,
+                      mainAxisExtent: 184,
+                    ),
                     delegate: SliverChildBuilderDelegate(
-                      (context, i) => _ProductTile(
-                        product: _products[i],
-                        qty: _cart[i] ?? 0,
-                        onIncrement: () => _increment(i),
-                        onDecrement: () => _decrement(i),
-                      ),
-                      childCount: _products.length,
+                      (context, index) {
+                        final product = filtered[index];
+                        final qty = _cart[product.id] ?? 0;
+                        final lowStock = product.stock < 8;
+
+                        return Glass(
+                          kind: GlassKind.glass,
+                          radius: 22,
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Emoji container with stock badge
+                              Container(
+                                height: 80,
+                                width: double.infinity,
+                                decoration: BoxDecoration(
+                                  color: T.white(0.07),
+                                  borderRadius: BorderRadius.circular(18),
+                                ),
+                                child: Stack(
+                                  children: [
+                                    Center(
+                                      child: Text(
+                                        product.emoji,
+                                        style: const TextStyle(fontSize: 34),
+                                      ),
+                                    ),
+                                    Positioned(
+                                      top: 6,
+                                      right: 6,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: lowStock ? T.op(T.amber500, 0.20) : T.op(T.emerald, 0.15),
+                                          borderRadius: BorderRadius.circular(999),
+                                        ),
+                                        child: Text(
+                                          lowStock ? '${product.stock} left' : 'In stock',
+                                          style: T.text(
+                                            9,
+                                            w: T.w700,
+                                            color: lowStock ? T.amber300 : T.emerald300,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              const SizedBox(height: 8),
+
+                              // Name
+                              Text(
+                                product.name,
+                                style: T.text(13, w: T.w600, color: Colors.white),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+
+                              const Spacer(),
+
+                              // Price & Add/Stepper row
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    '₱${product.price.toStringAsFixed(0)}',
+                                    style: T.mono(14, w: T.w800, color: T.cyan200),
+                                  ),
+                                  if (qty == 0)
+                                    PressScale(
+                                      onTap: () => _modifyQty(product.id, 1),
+                                      child: Container(
+                                        height: 30,
+                                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(999),
+                                          gradient: T.btnLiquidGradient,
+                                          boxShadow: T.btnShadow,
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(LucideIcons.plus, size: 12, color: Colors.white),
+                                            const SizedBox(width: 2),
+                                            Text(
+                                              'Add',
+                                              style: T.text(12, w: T.w700, color: Colors.white),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    )
+                                  else
+                                    Glass(
+                                      kind: GlassKind.pill,
+                                      height: 30,
+                                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          PressScale(
+                                            onTap: () => _modifyQty(product.id, -1),
+                                            child: const SizedBox(
+                                              width: 24,
+                                              height: 24,
+                                              child: Center(
+                                                child: Icon(LucideIcons.minus, size: 13, color: Colors.white),
+                                              ),
+                                            ),
+                                          ),
+                                          SizedBox(
+                                            width: 18,
+                                            child: Text(
+                                              '$qty',
+                                              textAlign: TextAlign.center,
+                                              style: T.mono(12, w: T.w700, color: Colors.white),
+                                            ),
+                                          ),
+                                          PressScale(
+                                            onTap: () {
+                                              if (qty < product.stock) {
+                                                _modifyQty(product.id, 1);
+                                              }
+                                            },
+                                            child: const SizedBox(
+                                              width: 24,
+                                              height: 24,
+                                              child: Center(
+                                                child: Icon(LucideIcons.plus, size: 13, color: Colors.white),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                      childCount: filtered.length,
                     ),
                   ),
                 ),
               ],
             ),
 
-            // ── Floating cart bar ────────────────────────────────────
+            // ── Floating Cart Bar (1:1 with React SarEScreen) ───────────────
             if (_cartItemCount > 0)
               Positioned(
-                bottom: bottomPad + 96,
-                left: 16,
-                right: 16,
-                child: _CartBar(
-                  itemCount: _cartItemCount,
-                  total: _cartTotal,
-                  onCheckout: _checkout,
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── Product Tile ──────────────────────────────────────────────────────────
-
-class _ProductTile extends StatelessWidget {
-  final SarEProduct product;
-  final int qty;
-  final VoidCallback onIncrement;
-  final VoidCallback onDecrement;
-
-  const _ProductTile({
-    required this.product,
-    required this.qty,
-    required this.onIncrement,
-    required this.onDecrement,
-  });
-
-  static const _teal = Color(0xFF06B6D4);
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            const Color(0xFF0369A1).withOpacity(qty > 0 ? 0.25 : 0.10),
-            const Color(0xFF0891B2).withOpacity(qty > 0 ? 0.15 : 0.06),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: qty > 0
-              ? _teal.withOpacity(0.4)
-              : const Color(0xFF0891B2).withOpacity(0.18),
-        ),
-      ),
-      child: Row(
-        children: [
-          // Emoji icon area (simple colored circle)
-          Container(
-            width: 44, height: 44,
-            decoration: BoxDecoration(
-              color: const Color(0xFF0369A1).withOpacity(0.3),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(LucideIcons.shoppingBag, color: Color(0xFF38BDF8), size: 22),
-          ),
-          const SizedBox(width: 12),
-
-          // Product info
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  product.name,
-                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '₱${product.price.toStringAsFixed(2)}',
-                  style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 13, fontWeight: FontWeight.w700),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(width: 8),
-
-          // Qty stepper
-          Row(
-            children: [
-              _StepperButton(
-                icon: LucideIcons.x,
-                onTap: onDecrement,
-                enabled: qty > 0,
-                isRemove: true,
-              ),
-              SizedBox(
-                width: 32,
-                child: Text(
-                  '$qty',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: qty > 0 ? Colors.white : Colors.white38,
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              _StepperButton(icon: LucideIcons.plus, onTap: onIncrement, enabled: true),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StepperButton extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-  final bool enabled;
-  final bool isRemove;
-
-  const _StepperButton({
-    required this.icon,
-    required this.onTap,
-    required this.enabled,
-    this.isRemove = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: enabled ? onTap : null,
-      child: Container(
-        width: 30, height: 30,
-        decoration: BoxDecoration(
-          color: enabled
-              ? (isRemove
-                  ? const Color(0xFFEF4444).withOpacity(0.12)
-                  : const Color(0xFF0891B2).withOpacity(0.18))
-              : Colors.white.withOpacity(0.04),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: enabled
-                ? (isRemove
-                    ? const Color(0xFFEF4444).withOpacity(0.35)
-                    : const Color(0xFF0891B2).withOpacity(0.4))
-                : Colors.white.withOpacity(0.08),
-          ),
-        ),
-        child: Icon(
-          icon,
-          size: 14,
-          color: enabled
-              ? (isRemove ? const Color(0xFFF87171) : const Color(0xFF38BDF8))
-              : Colors.white24,
-        ),
-      ),
-    );
-  }
-}
-
-// ── Cart Bar ──────────────────────────────────────────────────────────────
-
-class _CartBar extends StatelessWidget {
-  final int itemCount;
-  final double total;
-  final VoidCallback onCheckout;
-
-  const _CartBar({
-    required this.itemCount,
-    required this.total,
-    required this.onCheckout,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF0369A1), Color(0xFF0891B2), Color(0xFF06B6D4)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF0369A1).withOpacity(0.45),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 34, height: 34,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                const Icon(LucideIcons.shoppingCart, color: Colors.white, size: 18),
-                Positioned(
-                  top: 0, right: 0,
-                  child: Container(
-                    width: 14, height: 14,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFF59E0B),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Center(
-                      child: Text(
-                        '$itemCount',
-                        style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold),
+                bottom: 84, // elevated above bottom nav
+                left: T.screenPad,
+                right: T.screenPad,
+                child: Glass(
+                  kind: GlassKind.strong,
+                  radius: 24,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '$_cartItemCount item${_cartItemCount > 1 ? "s" : ""}',
+                              style: T.caption.copyWith(color: T.white(0.55)),
+                            ),
+                            Text(
+                              '₱${_cartTotal.toStringAsFixed(2)}',
+                              style: T.mono(17, w: T.w800, color: Colors.white),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      Btn(
+                        onTap: _checkout,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('Checkout with NFC', style: T.btn.copyWith(fontSize: 13)),
+                            const SizedBox(width: 4),
+                            const Icon(LucideIcons.arrowRight, size: 15),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$itemCount item${itemCount == 1 ? '' : 's'}',
-                  style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 11),
-                ),
-                Text(
-                  '₱${total.toStringAsFixed(2)}',
-                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-          ),
-          GestureDetector(
-            onTap: onCheckout,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
               ),
-              child: const Row(
-                children: [
-                  Icon(LucideIcons.creditCard, color: Color(0xFF0369A1), size: 16),
-                  SizedBox(width: 6),
-                  Text(
-                    'Checkout',
-                    style: TextStyle(color: Color(0xFF0369A1), fontSize: 13, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -16,7 +16,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.sare.secure_nfc_pay"
+        applicationId = "com.sare.secure_nfc_pay.v2"
         // minSdk 24 required by nfc_manager for ISO-DEP APDU transceive (JCOP plan Phase C)
         minSdk = 24
         targetSdk = flutter.targetSdkVersion

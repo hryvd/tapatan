@@ -1,22 +1,35 @@
-import 'package:flutter/material.dart';
-import '../utils/lucide_icons.dart';
-import '../providers/user_provider.dart';
 import 'dart:async';
+import 'dart:ui';
 
-import '../services/nfc_service.dart';
-import '../services/jcop_apdu_service.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../providers/user_provider.dart';
 import '../services/card_revocation_service.dart';
-import '../widgets/glass_button.dart';
-import '../widgets/jcop_tap_overlay.dart';
+import '../services/jcop_apdu_service.dart';
+import '../services/nfc_service.dart';
+import '../ui/tokens.dart';
+import '../ui/widgets.dart';
+import '../utils/lucide_icons.dart';
 
-enum FlowStep { idle, amount, pin, otp, authenticating, writing, ready, success, error }
+enum FlowStep {
+  idle,
+  amount,
+  pin,
+  otp,
+  authenticating,
+  writing,
+  ready,
+  success,
+  error
+}
 
 class NfcFlowScreen extends StatefulWidget {
   final VoidCallback? onClose;
   final void Function(double amount)? onTransactionComplete;
-  /// The tap\u0040tan card ID of the registered NFC card — embedded in the payment token.
   final String cardId;
   final SarEPendingOrder? pendingOrder;
+
   const NfcFlowScreen({
     super.key,
     this.onClose,
@@ -29,59 +42,109 @@ class NfcFlowScreen extends StatefulWidget {
   State<NfcFlowScreen> createState() => _NfcFlowScreenState();
 }
 
-class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateMixin {
-  @override
-  void initState() {
-    super.initState();
-    if (widget.pendingOrder != null) {
-      _amountStr = widget.pendingOrder!.totalAmount.toStringAsFixed(2);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _startWriteFlow();
-      });
-    }
-  }
+class _NfcFlowScreenState extends State<NfcFlowScreen>
+    with TickerProviderStateMixin {
   FlowStep _step = FlowStep.idle;
-  String _amountStr = "";
-  String _pinStr = "";
-  String _otpStr = "";
-  String _errorMsg = "";
+  String _amountStr = '';
+  String _pinStr = '';
+  String _otpStr = '';
+  String _errorMsg = '';
   TokenPayload? _payload;
 
-  /// Remaining PIN attempts as reported by the on-card OwnerPIN.
-  /// Updated after each VERIFY APDU response (63Cx status word).
-  /// -1 = unknown (card didn't report count), 0 = blocked.
+  int _apduIdx = 0;
   int _pinRetriesLeft = -1;
-
-  /// True when the current write flow is going through JCOP APDU path.
-  bool _isJcopFlow = false;
-
-  /// Current JCOP overlay step (shown during ISO-DEP exchanges).
-  JcopAuthStep _jcopStep = JcopAuthStep.waiting;
 
   static const int cardTimeoutSeconds = 5 * 60;
   int _timeoutSecsLeft = cardTimeoutSeconds;
   Timer? _timer;
   int _retrySecondsLeft = 0;
   Timer? _retryTimer;
+  Timer? _apduTimer;
   bool _writeCompleted = false;
 
   static const double microThreshold = 100.0;
   static const double mediumThreshold = 500.0;
   static const double highThreshold = 1000.0;
+  static const String _generatedOtp = '123456';
 
-  final String _generatedOtp = "123456"; // Mock OTP for demo
+  final TextEditingController _amountCtrl = TextEditingController();
+  final TextEditingController _otpCtrl = TextEditingController();
+
+  late final AnimationController _ringCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2400),
+  )..repeat();
+  late final AnimationController _shakeCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 500),
+  );
+  late final AnimationController _countdownCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 5),
+  );
+
+  static const _apduLines = [
+    'SELECT 0xA4 · AID F07461706174616E0101',
+    'TPT4 Turing handshake',
+    'INTERNAL AUTHENTICATE 0x88',
+    'STORE DATA 0xE2 · payment token',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.pendingOrder != null) {
+      _amountStr = widget.pendingOrder!.totalAmount.toStringAsFixed(2);
+      _amountCtrl.text = _amountStr;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _startWriteFlow();
+      });
+    } else {
+      // Directly show Amount entry sheet instead of a redundant intermediate button
+      _checkRevocationAndStart();
+    }
+  }
+
+  Future<void> _checkRevocationAndStart() async {
+    final revoked = await CardRevocationService.isRevoked(widget.cardId);
+    if (!mounted) return;
+    if (revoked) {
+      setState(() {
+        _errorMsg = 'This card has been revoked. Please contact support.';
+        _step = FlowStep.error;
+      });
+      return;
+    }
+    setState(() => _step = FlowStep.amount);
+  }
 
   @override
   void dispose() {
     _timer?.cancel();
     _retryTimer?.cancel();
+    _apduTimer?.cancel();
+    _ringCtrl.dispose();
+    _shakeCtrl.dispose();
+    _countdownCtrl.dispose();
+    _amountCtrl.dispose();
+    _otpCtrl.dispose();
     NfcService.stopSession();
     super.dispose();
+  }
+
+  double get _amount => double.tryParse(_amountStr.trim()) ?? 0;
+
+  String _authLevel() {
+    if (_amount < microThreshold) return 'micro';
+    if (_amount < mediumThreshold) return 'low';
+    if (_amount < highThreshold) return 'medium';
+    return 'high';
   }
 
   void _start5SecRetryTimer() {
     _retryTimer?.cancel();
     if (!mounted || _writeCompleted || _step == FlowStep.ready) return;
+    _countdownCtrl.forward(from: 0);
     setState(() => _retrySecondsLeft = 5);
     _retryTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted || _writeCompleted || _step == FlowStep.ready) {
@@ -109,7 +172,7 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
       setState(() {
         if (_timeoutSecsLeft <= 1) {
           timer.cancel();
-          _step = FlowStep.idle;
+          _step = FlowStep.amount;
           _payload = null;
         } else {
           _timeoutSecsLeft--;
@@ -118,64 +181,36 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
     });
   }
 
-  double get _amount => double.tryParse(_amountStr) ?? 0;
-
-  String _authLevel() {
-    if (_amount < microThreshold) return "micro";
-    if (_amount < mediumThreshold) return "low";
-    if (_amount < highThreshold) return "medium";
-    return "high";
-  }
-
-  void _handleStart() async {
-    bool revoked = await CardRevocationService.isRevoked(widget.cardId);
-    if (revoked) {
-      setState(() {
-        _errorMsg = 'This card has been revoked. Please contact support.';
-        _step = FlowStep.error;
-      });
-      return;
-    }
-    setState(() {
-      _amountStr = '';
-      _pinStr = '';
-      _otpStr = '';
-      _step = FlowStep.amount;
-    });
-  }
-
   void _handleAmountNext() {
     if (_amount <= 0) return;
-    String level = _authLevel();
-    if (level == "micro" || level == "low") {
+    final level = _authLevel();
+    if (level == 'micro' || level == 'low') {
       _startWriteFlow();
     } else {
-      setState(() => _step = FlowStep.pin);
+      setState(() {
+        _pinStr = '';
+        _errorMsg = '';
+        _step = FlowStep.pin;
+      });
     }
   }
 
-  void _handlePinNext() async {
+  void _handlePinNext() {
     if (_pinStr.length < 4) return;
-    String level = _authLevel();
-
-    // Perform PIN check + token write in a single unified NFC tap during _startWriteFlow()
-    // so the user never has to tap the physical card twice back-to-back.
-    _isJcopFlow = true;
-    _proceedAfterPin(level);
-  }
-
-  /// Proceeds to the next flow step after a successful PIN verification.
-  void _proceedAfterPin(String level) {
-    if (level == 'high') {
-      setState(() => _step = FlowStep.otp);
+    if (_authLevel() == 'high') {
+      setState(() {
+        _otpStr = '';
+        _errorMsg = '';
+        _step = FlowStep.otp;
+      });
     } else {
       _startWriteFlow();
     }
   }
 
   void _handleOtpNext() {
-    if (_otpStr != _generatedOtp) {
-      setState(() => _errorMsg = "Incorrect OTP. Check your email.");
+    if (_otpStr.trim() != _generatedOtp) {
+      setState(() => _errorMsg = 'Incorrect OTP. Use demo OTP $_generatedOtp.');
       return;
     }
     _startWriteFlow();
@@ -185,18 +220,18 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
     if (_writeCompleted) return;
     _writeCompleted = true;
     _retryTimer?.cancel();
+    _apduTimer?.cancel();
     await JcopApduService.stopSession();
     if (!mounted) return;
     await CardRevocationService.incrementUseCount(widget.cardId);
     await CardRevocationService.recordLastTap(widget.cardId);
     if (!mounted) return;
     setState(() {
-      _jcopStep = JcopAuthStep.success;
+      _apduIdx = _apduLines.length;
       _step = FlowStep.ready;
     });
     _startTimer();
 
-    // Automatically acknowledge & approve the secured card payment
     Future.delayed(const Duration(milliseconds: 1100), () {
       if (mounted && _step == FlowStep.ready) {
         widget.onTransactionComplete?.call(_amount);
@@ -207,15 +242,27 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
   Future<void> _startWriteFlow({bool simulate = false}) async {
     if (_writeCompleted || _step == FlowStep.writing) return;
     _retryTimer?.cancel();
+    _apduTimer?.cancel();
+
     final newPayload =
         NfcService.buildTokenPayload(widget.cardId, _amount > 0 ? _amount : null);
 
     setState(() {
       _payload = newPayload;
       _step = FlowStep.writing;
-      _jcopStep = JcopAuthStep.waiting;
+      _apduIdx = 0;
       _errorMsg = '';
       _retrySecondsLeft = 0;
+    });
+
+    _apduTimer = Timer.periodic(const Duration(milliseconds: 520), (t) {
+      if (!mounted || _step != FlowStep.writing) {
+        t.cancel();
+        return;
+      }
+      if (_apduIdx < _apduLines.length - 1) {
+        setState(() => _apduIdx++);
+      }
     });
 
     if (simulate) {
@@ -224,16 +271,16 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
       return;
     }
 
-    // Unified single-tap JCOP4 ISO-DEP write flow
     final result = await NfcService.writeTokenToNfc(newPayload);
-
+    _apduTimer?.cancel();
     if (!mounted || _writeCompleted) return;
 
     if (result['success'] == true) {
       await _completeWriteSuccess();
     } else {
+      _shakeCtrl.forward(from: 0);
       setState(() {
-        _errorMsg = result['error'] ?? 'NFC write failed.';
+        _errorMsg = (result['error'] as String?) ?? 'NFC write failed.';
         _step = FlowStep.error;
       });
       _start5SecRetryTimer();
@@ -243,495 +290,520 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
   void _reset() {
     _timer?.cancel();
     _retryTimer?.cancel();
+    _apduTimer?.cancel();
+    _amountCtrl.clear();
+    _otpCtrl.clear();
     setState(() {
-      _step = FlowStep.idle;
+      _step = FlowStep.amount;
       _payload = null;
-      _amountStr = "";
-      _pinStr = "";
-      _otpStr = "";
-      _errorMsg = "";
+      _amountStr = '';
+      _pinStr = '';
+      _otpStr = '';
+      _errorMsg = '';
       _pinRetriesLeft = -1;
-      _isJcopFlow = false;
       _writeCompleted = false;
       _retrySecondsLeft = 0;
-      _jcopStep = JcopAuthStep.waiting;
     });
+  }
+
+  void _closeFlow() {
+    if (widget.onClose != null) {
+      widget.onClose!();
+    } else {
+      Navigator.of(context).maybePop();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFF18181B), // Shadcn Card Color
-        borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-      ),
-      padding: const EdgeInsets.only(top: 24, left: 24, right: 24, bottom: 40),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text("NFC Pay Flow", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-              IconButton(
-                icon: const Icon(Icons.close, color: Colors.white54),
-                onPressed: () {
-                  if (widget.onClose != null) {
-                    widget.onClose!();
-                  } else {
-                    Navigator.pop(context);
-                  }
-                },
-              )
-            ],
-          ),
-          const Text("Real NFC · Privacy-preserving payment", style: TextStyle(color: Colors.white38, fontSize: 12)),
-          const SizedBox(height: 24),
-          
-          if (_step == FlowStep.idle)
-            _buildIdle()
-          else if (_step == FlowStep.amount)
-            _buildAmount()
-          else if (_step == FlowStep.pin)
-            _buildPin()
-          else if (_step == FlowStep.otp)
-            _buildOtp()
-          else if (_step == FlowStep.authenticating || _step == FlowStep.writing)
-            _buildLoading()
-          else if (_step == FlowStep.ready)
-            _buildReady()
-          else if (_step == FlowStep.error)
-            _buildError()
-        ],
-      ),
-    );
-  }
-
-  Widget _buildIdle() {
-    return Column(
-      children: [
-        GlassButton(
-          onPressed: _handleStart,
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(LucideIcons.wifi, color: Colors.white),
-              SizedBox(width: 8),
-              Text("Start Payment Flow", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-            ],
-          ),
-        )
-      ],
-    );
-  }
-
-  Widget _buildAmount() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.white.withOpacity(0.12)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(LucideIcons.dollarSign, size: 14, color: Color(0xFF38BDF8)),
-                  const SizedBox(width: 8),
-                  Text("TRANSACTION AMOUNT (₱)", style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12, fontWeight: FontWeight.bold)),
-                ],
-              ),
-              TextField(
-                autofocus: true,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
-                decoration: const InputDecoration(
-                  border: InputBorder.none,
-                  hintText: "0.00",
-                  hintStyle: TextStyle(color: Colors.white24),
-                ),
-                onChanged: (v) => setState(() => _amountStr = v),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: GlassButton(
-                isSecondary: true,
-                onPressed: _reset,
-                child: const Text("Cancel", style: TextStyle(color: Colors.white54)),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: GlassButton(
-                onPressed: _amount > 0 ? _handleAmountNext : null,
-                child: const Text("Continue", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              ),
-            ),
-          ],
-        )
-      ],
-    );
-  }
-
-  Widget _buildPin() {
-    final bool hasRetryWarning = _pinRetriesLeft >= 0 && _pinRetriesLeft <= 2;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: hasRetryWarning
-                ? const Color(0x1FEF4444)
-                : Colors.white.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: hasRetryWarning
-                  ? const Color(0x4DEF4444)
-                  : Colors.white.withOpacity(0.12),
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        LucideIcons.keyRound,
-                        size: 14,
-                        color: hasRetryWarning
-                            ? const Color(0xFFF87171)
-                            : const Color(0xFF38BDF8),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'ENTER PIN${_amount >= highThreshold ? " (Step 1 of 2)" : ""}',
-                        style: TextStyle(
-                          color: hasRetryWarning
-                              ? const Color(0xFFF87171)
-                              : Colors.white.withOpacity(0.6),
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  // On-card retry counter badge
-                  if (_pinRetriesLeft >= 0)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: _pinRetriesLeft == 0
-                            ? const Color(0x4DEF4444)
-                            : _pinRetriesLeft <= 1
-                                ? const Color(0x33FBBF24)
-                                : const Color(0x2006B6D4),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        _pinRetriesLeft == 0
-                            ? 'LOCKED'
-                            : '$_pinRetriesLeft ${_pinRetriesLeft == 1 ? 'try' : 'tries'} left',
-                        style: TextStyle(
-                          color: _pinRetriesLeft == 0
-                              ? const Color(0xFFF87171)
-                              : _pinRetriesLeft <= 1
-                                  ? const Color(0xFFFBBF24)
-                                  : const Color(0xFF38BDF8),
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              TextField(
-                autofocus: true,
-                obscureText: true,
-                keyboardType: TextInputType.number,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 8),
-                decoration: const InputDecoration(
-                  border: InputBorder.none,
-                  hintText: '••••',
-                  hintStyle:
-                      TextStyle(color: Colors.white24, letterSpacing: 8),
-                ),
-                onChanged: (v) => setState(() => _pinStr = v),
-              ),
-              // Error message from on-card response
-              if (_errorMsg.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    _errorMsg,
-                    style: const TextStyle(
-                        color: Color(0xFFF87171), fontSize: 12),
-                  ),
-                ),
-              // Card-side enforcement note
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Row(
+    // Steps amount / pin / otp appear as crisp liquid-glass bottom sheet
+    if (_step == FlowStep.idle ||
+        _step == FlowStep.amount ||
+        _step == FlowStep.pin ||
+        _step == FlowStep.otp) {
+      return Material(
+        type: MaterialType.transparency,
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+          child: Container(
+            color: T.blk(.55),
+            alignment: Alignment.bottomCenter,
+            padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom),
+            child: Glass(
+              kind: GlassKind.strong,
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(T.rSheet)),
+              padding: EdgeInsets.fromLTRB(
+                  20, 10, 20, MediaQuery.of(context).padding.bottom + 24),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Icon(LucideIcons.shieldCheck,
-                        size: 10,
-                        color: Colors.white.withOpacity(0.25)),
-                    const SizedBox(width: 4),
-                    Text(
-                      'PIN verified on-card · Retry limit enforced by hardware',
-                      style: TextStyle(
-                          color: Colors.white.withOpacity(0.25),
-                          fontSize: 9),
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: T.white(.3),
+                          borderRadius: BorderRadius.circular(99),
+                        ),
+                      ),
                     ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('NFC Tap to Pay', style: T.text(17, w: T.w700)),
+                            Text(
+                              'JCOP4 J3R150 · Turing Composition MAC',
+                              style: T.mono(10, color: T.white(.45)),
+                            ),
+                          ],
+                        ),
+                        GlassIconBtn(icon: LucideIcons.x, onTap: _closeFlow),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    if (_step == FlowStep.amount || _step == FlowStep.idle)
+                      _buildAmountSheetBody()
+                    else if (_step == FlowStep.pin)
+                      _buildPinSheetBody()
+                    else
+                      _buildOtpSheetBody(),
                   ],
                 ),
               ),
-            ],
+            ),
           ),
         ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: GlassButton(
-                isSecondary: true,
-                onPressed: _reset,
-                child: const Text('Cancel',
-                    style: TextStyle(color: Colors.white54)),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: GlassButton(
-                onPressed: (_pinStr.length >= 4 && _pinRetriesLeft != 0)
-                    ? _handlePinNext
-                    : null,
-                child: const Text('Confirm',
-                    style: TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold)),
-              ),
-            ),
-          ],
-        )
-      ],
-    );
-  }
-  
-  Widget _buildOtp() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.white.withOpacity(0.12)),
+      );
+    }
+
+    // Fullscreen NFC Tap / Approved / Failed screen (1:1 React NfcTap)
+    final isFail = _step == FlowStep.error;
+    final isReady = _step == FlowStep.ready || _step == FlowStep.success;
+    final tone = isFail ? T.red400 : (isReady ? T.emerald400 : T.cyan400);
+    final headline = isReady
+        ? 'Approved ✓'
+        : isFail
+            ? 'Unauthorized Card'
+            : _step == FlowStep.authenticating
+                ? 'Updating Card State…'
+                : 'Pay ₱${_amount.toStringAsFixed(2)}';
+
+    return Material(
+      type: MaterialType.transparency,
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: Container(
+          color: T.op(T.bg, .92),
+          padding: EdgeInsets.fromLTRB(
+            24,
+            MediaQuery.of(context).padding.top + 20,
+            24,
+            MediaQuery.of(context).padding.bottom + 24,
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Stack(
             children: [
-              Row(
+              Column(
                 children: [
-                  const Icon(LucideIcons.mail, size: 14, color: Color(0xFF38BDF8)),
-                  const SizedBox(width: 8),
-                  Text("EMAIL OTP (Step 2 of 2)", style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 16),
+                  Text(
+                    'ISO 14443-4 · JCOP4 J3R150',
+                    style: T.mono(11, color: T.white(.45), ls: 1.1),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    headline,
+                    textAlign: TextAlign.center,
+                    style: T.text(22, w: T.w800),
+                  ),
+                  Expanded(
+                    child: AnimatedBuilder(
+                      animation: _shakeCtrl,
+                      builder: (_, child) {
+                        final v = _shakeCtrl.value;
+                        final dx = isFail && _shakeCtrl.isAnimating
+                            ? (v < .25 ? -8.0 : v < .5 ? 8.0 : -4.0)
+                            : 0.0;
+                        return Transform.translate(
+                            offset: Offset(dx, 0), child: child);
+                      },
+                      child: Center(
+                        child: Stack(
+                          alignment: Alignment.center,
+                          clipBehavior: Clip.none,
+                          children: [
+                            if (!isFail && !isReady)
+                              for (var i = 0; i < 3; i++)
+                                AnimatedBuilder(
+                                  animation: _ringCtrl,
+                                  builder: (_, _) {
+                                    final p =
+                                        ((_ringCtrl.value * 2.4 - i * .8) /
+                                                2.4) %
+                                            1.0;
+                                    final pp = p < 0 ? p + 1 : p;
+                                    final eased = Curves.easeOut.transform(pp);
+                                    return Opacity(
+                                      opacity: (.8 * (1 - eased)).clamp(0, 1),
+                                      child: Transform.scale(
+                                        scale: .4 + 1.2 * eased,
+                                        child: Container(
+                                          width: 208,
+                                          height: 208,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                                color: tone, width: 2),
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                            if (isFail && _retrySecondsLeft > 0)
+                              SizedBox(
+                                width: 224,
+                                height: 224,
+                                child: AnimatedBuilder(
+                                  animation: _countdownCtrl,
+                                  builder: (_, _) => CustomPaint(
+                                    painter: _FlowCountdownPainter(
+                                        _countdownCtrl.value),
+                                  ),
+                                ),
+                              ),
+                            AnimatedScale(
+                              scale: isReady ? 1.1 : 1.0,
+                              duration: const Duration(milliseconds: 250),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                        color: T.op(tone, .33), blurRadius: 60),
+                                  ],
+                                ),
+                                child: Glass(
+                                  radius: 64,
+                                  width: 128,
+                                  height: 128,
+                                  child: Icon(
+                                    isReady
+                                        ? LucideIcons.check
+                                        : isFail
+                                            ? LucideIcons.shieldAlert
+                                            : LucideIcons.nfc,
+                                    size: 56,
+                                    color: tone,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (isReady)
+                    _buildReadyBottom()
+                  else if (isFail)
+                    _buildErrorBottom()
+                  else
+                    _buildWritingBottom(),
                 ],
               ),
-              const SizedBox(height: 8),
-              Text("Demo OTP: $_generatedOtp", style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11)),
-              TextField(
-                autofocus: true,
-                keyboardType: TextInputType.number,
-                style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold, letterSpacing: 8),
-                decoration: const InputDecoration(
-                  border: InputBorder.none,
-                  hintText: "000000",
-                  hintStyle: TextStyle(color: Colors.white24, letterSpacing: 8),
+              Positioned(
+                top: 0,
+                right: 0,
+                child: GlassIconBtn(
+                  icon: LucideIcons.x,
+                  size: 36,
+                  onTap: _closeFlow,
                 ),
-                onChanged: (v) => setState(() { _otpStr = v; _errorMsg = ""; }),
               ),
-              if (_errorMsg.isNotEmpty)
-                Text(_errorMsg, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
             ],
           ),
         ),
-        const SizedBox(height: 16),
+      ),
+    );
+  }
+
+  Widget _buildAmountSheetBody() {
+    final tierLabel = _amount <= 0
+        ? 'Enter amount to compute verification tier'
+        : _amount < mediumThreshold
+            ? 'Standard Tap · No PIN required (< ₱500)'
+            : _amount < highThreshold
+                ? 'Elevated Tier · Requires Card PIN (≥ ₱500)'
+                : 'High-Value Tier · Card PIN + Email OTP (≥ ₱1,000)';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [50, 150, 500, 1200].map((v) {
+            final selected = _amount == v.toDouble();
+            return Expanded(
+              child: Padding(
+                padding: EdgeInsets.only(right: v == 1200 ? 0 : 8),
+                child: PressScale(
+                  onTap: () => setState(() {
+                    _amountStr = v.toString();
+                    _amountCtrl.text = _amountStr;
+                  }),
+                  child: Container(
+                    height: 42,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: selected ? T.op(T.cyan400, .20) : T.white(.06),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: selected ? T.op(T.cyan300, .6) : T.white(.1),
+                      ),
+                    ),
+                    child: Text(
+                      '₱$v',
+                      style: T.text(
+                        12.5,
+                        w: T.w700,
+                        color: selected ? T.cyan200 : T.white(.75),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 12),
+        Field(
+          label: 'Transaction amount (₱)',
+          mono: true,
+          controller: _amountCtrl,
+          hint: '0.00',
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          onChanged: (v) => setState(() => _amountStr = v),
+        ),
+        Text(
+          tierLabel,
+          style: T.text(11, color: T.cyan300),
+        ),
+        const SizedBox(height: 14),
         Row(
           children: [
-            Expanded(
-              child: GlassButton(
-                isSecondary: true,
-                onPressed: _reset,
-                child: const Text("Cancel", style: TextStyle(color: Colors.white54)),
-              ),
+            Btn.text(
+              'Cancel',
+              variant: BtnVariant.glass,
+              onTap: _closeFlow,
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             Expanded(
-              child: GlassButton(
-                onPressed: _otpStr.length >= 6 ? _handleOtpNext : null,
-                child: const Text("Verify", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              child: Btn.text(
+                'Continue to NFC Tap',
+                disabled: _amount <= 0,
+                onTap: _handleAmountNext,
               ),
             ),
           ],
-        )
+        ),
       ],
     );
   }
 
-  Widget _buildLoading() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.1)),
-      ),
-      child: Column(
-        children: [
-          const CircularProgressIndicator(color: Color(0xFF38BDF8)),
-          const SizedBox(height: 16),
-          Text(
-            _step == FlowStep.authenticating
-                ? "Authenticating JCOP4 Card..."
-                : "Hold phone to JCOP4 NFC Card...",
-            style: const TextStyle(
-                color: Color(0xFF38BDF8),
-                fontSize: 16,
-                fontWeight: FontWeight.bold),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 16),
-          GlassButton(
-            isSecondary: true,
-            onPressed: () => _startWriteFlow(simulate: true),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(LucideIcons.shieldCheck, color: Color(0xFF34D399), size: 16),
-                SizedBox(width: 8),
-                Text(
-                  "Arm via Provisioned JCOP4 Card",
-                  style: TextStyle(
-                      color: Color(0xFF34D399),
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildReady() {
-    int mins = _timeoutSecsLeft ~/ 60;
-    int secs = _timeoutSecsLeft % 60;
-    String timeoutStr = "$mins:${secs.toString().padLeft(2, '0')}";
-    double timeoutPct = _timeoutSecsLeft / cardTimeoutSeconds;
-
+  Widget _buildPinSheetBody() {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [Color(0x3310B981), Color(0x2606B6D4)]),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0x5910B981)),
-          ),
-          child: Column(
-            children: [
-              const Icon(LucideIcons.badgeCheck, color: Color(0xFF34D399), size: 40),
-              const SizedBox(height: 12),
-              const Text(
-                "Card Read & Acknowledged — Payment Approved!",
-                style: TextStyle(color: Color(0xFF34D399), fontSize: 16, fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                "Secured JCOP4 Transaction Verified · ₱${_amount.toStringAsFixed(2)}",
-                style: TextStyle(color: Colors.white.withOpacity(0.75), fontSize: 12),
-              ),
-              if (_payload != null) ...[
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.black26,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(_payload!.token, style: const TextStyle(color: Color(0xFF67E8F9), fontFamily: 'monospace', fontSize: 11)),
-                )
-              ]
-            ],
-          ),
-        ),
-        const SizedBox(height: 24),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Row(
-              children: [
-                const Icon(LucideIcons.timer, color: Color(0xFFFBBF24), size: 14),
-                const SizedBox(width: 4),
-                Text("Expires in $timeoutStr", style: const TextStyle(color: Color(0xFFFBBF24), fontWeight: FontWeight.bold)),
-              ],
+            Text(
+              'Card PIN${_amount >= highThreshold ? ' · Step 1 of 2' : ''}',
+              style: T.text(13, color: T.white(.60)),
             ),
-            const Text("Auto-completing secured payment...", style: TextStyle(color: Color(0xFF34D399), fontSize: 10, fontWeight: FontWeight.bold)),
+            if (_pinRetriesLeft >= 0)
+              Badge2(
+                _pinRetriesLeft == 0 ? 'LOCKED' : '$_pinRetriesLeft TRIES LEFT',
+                color: _pinRetriesLeft <= 1 ? T.red400 : T.cyan400,
+                textColor: _pinRetriesLeft <= 1 ? T.red300 : T.cyan200,
+              ),
           ],
         ),
-        const SizedBox(height: 8),
-        LinearProgressIndicator(
-          value: timeoutPct,
-          backgroundColor: Colors.white12,
-          valueColor: AlwaysStoppedAnimation<Color>(
-            timeoutPct > 0.5 ? const Color(0xFF34D399) : 
-            timeoutPct > 0.2 ? const Color(0xFFFBBF24) : 
-            const Color(0xFFEF4444)
+        PinDots(n: _pinStr.length, max: 6),
+        if (_errorMsg.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              _errorMsg,
+              textAlign: TextAlign.center,
+              style: T.text(12, color: T.red400),
+            ),
           ),
+        Numpad(
+          value: _pinStr,
+          max: 6,
+          onChanged: (v) => setState(() => _pinStr = v),
         ),
-        const SizedBox(height: 24),
-        GlassButton(
-          isSecondary: true,
-          onPressed: () {
-            widget.onTransactionComplete?.call(_amount);
-          },
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
+        const SizedBox(height: 14),
+        Row(
+          children: [
+            Btn.text('Back', variant: BtnVariant.glass, onTap: _reset),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Btn.text(
+                'Confirm PIN',
+                disabled: _pinStr.length < 4 || _pinRetriesLeft == 0,
+                onTap: _handlePinNext,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOtpSheetBody() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'High-value payment detected (≥ ₱1,000). Enter 6-digit email OTP (demo: $_generatedOtp).',
+          style: T.text(12, color: T.white(.60)),
+        ),
+        const SizedBox(height: 12),
+        Field(
+          label: 'Email OTP (Step 2 of 2)',
+          mono: true,
+          controller: _otpCtrl,
+          hint: '123456',
+          maxLength: 6,
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          onChanged: (v) => setState(() {
+            _otpStr = v;
+            _errorMsg = '';
+          }),
+        ),
+        if (_errorMsg.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(_errorMsg, style: T.text(12, color: T.red400)),
+          ),
+        Row(
+          children: [
+            Btn.text('Cancel', variant: BtnVariant.glass, onTap: _reset),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Btn.text(
+                'Verify OTP & Tap',
+                disabled: _otpStr.length < 6,
+                onTap: _handleOtpNext,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWritingBottom() {
+    return Column(
+      children: [
+        Glass(
+          radius: 22,
+          padding: const EdgeInsets.all(14),
+          child: Column(
             children: [
-              Icon(LucideIcons.checkCircle, color: Color(0xFF34D399), size: 16),
-              SizedBox(width: 8),
-              Text('Payment Approved — Done', style: TextStyle(color: Color(0xFF34D399), fontSize: 14, fontWeight: FontWeight.w700)),
+              for (var i = 0; i < _apduLines.length; i++)
+                Padding(
+                  padding: EdgeInsets.only(top: i == 0 ? 0 : 6),
+                  child: Row(
+                    children: [
+                      i < _apduIdx
+                          ? const Icon(LucideIcons.check,
+                              size: 14, color: T.emerald400)
+                          : const SizedBox(
+                              width: 14, child: Center(child: Text('›'))),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _apduLines[i],
+                          style: T.mono(
+                            11.5,
+                            color: i < _apduIdx
+                                ? T.emerald400
+                                : i == _apduIdx
+                                    ? T.cyan400
+                                    : T.white(.35),
+                          ),
+                        ),
+                      ),
+                      if (i < _apduIdx)
+                        Text('9000', style: T.mono(11, color: T.white(.40))),
+                    ],
+                  ),
+                ),
             ],
           ),
         ),
         const SizedBox(height: 12),
-        GlassButton(
-          isSecondary: true,
-          onPressed: () async {
+        Btn.text(
+          'Arm via Provisioned JCOP4 Card',
+          variant: BtnVariant.glass,
+          width: double.infinity,
+          onTap: () => _startWriteFlow(simulate: true),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildReadyBottom() {
+    final mins = _timeoutSecsLeft ~/ 60;
+    final secs = (_timeoutSecsLeft % 60).toString().padLeft(2, '0');
+    return Column(
+      children: [
+        Glass(
+          radius: 22,
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Text(
+                widget.pendingOrder?.merchant ?? 'NFC POS Terminal',
+                style: T.text(11.5, color: T.white(.55)),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '₱${_amount.toStringAsFixed(2)}',
+                style: T.text(28, w: T.w800),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'TM•${_payload?.token ?? "9000"} · MAC verified · $mins:$secs left',
+                style: T.mono(11, color: T.emerald300),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Btn.text(
+          'Done',
+          width: double.infinity,
+          onTap: () => widget.onTransactionComplete?.call(_amount),
+        ),
+        const SizedBox(height: 8),
+        Btn.text(
+          'Disarm / Revert Card',
+          variant: BtnVariant.glass,
+          width: double.infinity,
+          onTap: () async {
             setState(() {
               _step = FlowStep.authenticating;
               _errorMsg = '';
@@ -742,73 +814,83 @@ class _NfcFlowScreenState extends State<NfcFlowScreen> with TickerProviderStateM
               _reset();
             } else {
               setState(() {
-                _errorMsg = result['error'] ?? 'Failed to disarm card.';
+                _errorMsg =
+                    (result['error'] as String?) ?? 'Failed to disarm card.';
                 _step = FlowStep.error;
               });
             }
           },
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(LucideIcons.shieldOff, color: Color(0xFFFBBF24), size: 16),
-              SizedBox(width: 8),
-              Text('Disarm / Revert Card', style: TextStyle(color: Color(0xFFFBBF24), fontSize: 14, fontWeight: FontWeight.w700)),
-            ],
-          ),
         ),
       ],
     );
   }
 
-  Widget _buildError() {
+  Widget _buildErrorBottom() {
     return Column(
       children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-          decoration: BoxDecoration(
-            color: const Color(0x1FEF4444),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0x4DEF4444)),
-          ),
-          alignment: Alignment.center,
-          child: Column(
-            children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(LucideIcons.alertTriangle, color: Color(0xFFF87171), size: 20),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      _errorMsg.isNotEmpty ? _errorMsg : "NFC write failed",
-                      style: const TextStyle(color: Color(0xFFF87171), fontSize: 14, fontWeight: FontWeight.bold),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                ],
-              ),
-              if (_retrySecondsLeft > 0) ...[
-                const SizedBox(height: 8),
-                Text(
-                  'Re-scanning automatically in ${_retrySecondsLeft}s...',
-                  style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 12, fontWeight: FontWeight.bold),
-                ),
-              ],
-            ],
-          ),
+        Text(
+          _errorMsg.isNotEmpty
+              ? _errorMsg
+              : 'SW 0x6982 · SECURITY_STATUS_NOT_SATISFIED',
+          textAlign: TextAlign.center,
+          style: T.mono(11.5, color: T.red400),
         ),
-        const SizedBox(height: 16),
-        GlassButton(
-          onPressed: () => _startWriteFlow(simulate: false),
-          child: Text(
-            _retrySecondsLeft > 0
-                ? "Re-scanning in ${_retrySecondsLeft}s (Tap to Scan Now)"
-                : "Try Again",
-            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+        if (_retrySecondsLeft > 0) ...[
+          const SizedBox(height: 4),
+          Text(
+            'Auto-rescanning in ${_retrySecondsLeft}s…',
+            style: T.text(12, color: T.white(.55)),
           ),
-        )
+        ],
+        const SizedBox(height: 12),
+        Btn.text(
+          _retrySecondsLeft > 0
+              ? 'Retry Now (${_retrySecondsLeft}s)'
+              : 'Retry Now',
+          variant: BtnVariant.glass,
+          width: double.infinity,
+          onTap: () => _startWriteFlow(simulate: false),
+        ),
+        const SizedBox(height: 8),
+        Btn.text(
+          'Arm via Provisioned JCOP4 Card',
+          width: double.infinity,
+          onTap: () => _startWriteFlow(simulate: true),
+        ),
       ],
     );
   }
+}
+
+class _FlowCountdownPainter extends CustomPainter {
+  final double progress;
+  _FlowCountdownPainter(this.progress);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    final r = size.width * .45;
+    canvas.drawCircle(
+      c,
+      r,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = size.width * .03
+        ..color = T.white(.1),
+    );
+    canvas.drawArc(
+      Rect.fromCircle(center: c, radius: r),
+      -1.5708,
+      6.2832 * (1 - progress),
+      false,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = size.width * .03
+        ..strokeCap = StrokeCap.round
+        ..color = T.amber500,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_FlowCountdownPainter old) => old.progress != progress;
 }
