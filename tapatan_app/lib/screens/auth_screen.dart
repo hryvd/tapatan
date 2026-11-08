@@ -44,6 +44,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
 
   int _retrySecondsLeft = 0;
   Timer? _retryTimer;
+  String? _nfcErrorNote;
 
   List<AccountSummary> _savedAccounts = const [];
   AccountManagementConfig _accountConfig = const AccountManagementConfig();
@@ -130,6 +131,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
       _cardStep = 'idle';
       _nfcTapping = false;
       _retrySecondsLeft = 0;
+      _nfcErrorNote = null;
     });
 
     if (view == AuthView.login && !_nfcCompleted && !_isNavigating) {
@@ -139,7 +141,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
             !_nfcTapping &&
             !_nfcCompleted &&
             !_isNavigating) {
-          _handleNFCTapLogin();
+          _handleNFCTapLogin(userInitiated: false);
         }
       });
     }
@@ -177,18 +179,12 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
 
   void _showSnack(String msg, {bool isError = false}) {
     if (!mounted) return;
-    if (!isError) {
-      showToast(context, msg);
-      return;
-    }
     ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: T.red500,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
+    showToast(
+      context,
+      msg,
+      isError: isError,
+      duration: Duration(milliseconds: isError ? 3400 : 2200),
     );
   }
 
@@ -251,12 +247,13 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
 
   // ── NFC Tap Login ─────────────────────────────────────────────────────────
 
-  Future<void> _handleNFCTapLogin() async {
+  Future<void> _handleNFCTapLogin({bool userInitiated = true}) async {
     if (_nfcTapping || _nfcCompleted || _isNavigating) return;
     _retryTimer?.cancel();
     setState(() {
       _nfcTapping = true;
       _retrySecondsLeft = 0;
+      _nfcErrorNote = null;
     });
 
     try {
@@ -284,45 +281,67 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
         if (!mounted || _view != AuthView.login || _isNavigating) return;
 
         if (!authRes.success || authRes.account == null) {
-          setState(() => _nfcTapping = false);
-          _showSnack(
-            '${authRes.error ?? 'Card is not linked to an account.'} Re-scanning in 5s...',
-            isError: true,
-          );
+          final errMsg = authRes.error ?? 'Card is not linked to an account.';
+          setState(() {
+            _nfcTapping = false;
+            _nfcErrorNote = errMsg;
+          });
+          _showSnack('$errMsg Re-scanning in 5s...', isError: true);
           _start5SecRetryTimer(() {
             if (mounted && _view == AuthView.login && !_nfcCompleted) {
-              _handleNFCTapLogin();
+              _handleNFCTapLogin(userInitiated: false);
             }
           });
           return;
         }
 
         _nfcCompleted = true;
-        setState(() => _nfcTapping = false);
+        setState(() {
+          _nfcTapping = false;
+          _nfcErrorNote = null;
+        });
 
         await ref
             .read(userProvider.notifier)
             .applyAuthenticatedAccount(authRes.account!, armed: true);
         _navigateToMain();
       } else {
-        setState(() => _nfcTapping = false);
-        _showSnack(
-          '${(res['error'] as String?) ?? 'NFC Card recognition failed.'} Re-scanning in 5s...',
-          isError: true,
-        );
-        _start5SecRetryTimer(() {
-          if (mounted && _view == AuthView.login && !_nfcCompleted) {
-            _handleNFCTapLogin();
-          }
+        final errMsg =
+            (res['error'] as String?) ?? 'NFC Card recognition failed.';
+        final lower = errMsg.toLowerCase();
+        final hardwareUnavailable = lower.contains('unavailable') ||
+            lower.contains('disabled') ||
+            lower.contains('not supported');
+        setState(() {
+          _nfcTapping = false;
+          _nfcErrorNote = hardwareUnavailable
+              ? 'NFC reader unavailable · Use Email & PIN or tap to re-check'
+              : errMsg;
         });
+        if (hardwareUnavailable) {
+          if (userInitiated) {
+            _showSnack(errMsg, isError: true);
+          }
+        } else {
+          _showSnack('$errMsg Re-scanning in 5s...', isError: true);
+          _start5SecRetryTimer(() {
+            if (mounted && _view == AuthView.login && !_nfcCompleted) {
+              _handleNFCTapLogin(userInitiated: false);
+            }
+          });
+        }
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _nfcTapping = false);
-      _showSnack('NFC error: $e. Re-scanning in 5s...', isError: true);
+      final errMsg = 'NFC error: $e';
+      setState(() {
+        _nfcTapping = false;
+        _nfcErrorNote = errMsg;
+      });
+      _showSnack('$errMsg. Re-scanning in 5s...', isError: true);
       _start5SecRetryTimer(() {
         if (mounted && _view == AuthView.login && !_nfcCompleted) {
-          _handleNFCTapLogin();
+          _handleNFCTapLogin(userInitiated: false);
         }
       });
     }
@@ -504,19 +523,28 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
         await Future.delayed(const Duration(milliseconds: 350));
         _navigateToMain();
       } else {
+        final rawErr = (res['error'] as String?) ?? 'Card recognition failed.';
+        final lower = rawErr.toLowerCase();
+        final hardwareUnavailable = lower.contains('unavailable') ||
+            lower.contains('disabled') ||
+            lower.contains('not supported');
         setState(() => _cardStep = 'error');
-        _showSnack(
-          '${(res['error'] as String?) ?? 'Card recognition failed.'} Re-scanning in 5s...',
-          isError: true,
-        );
-        _start5SecRetryTimer(() {
-          if (mounted &&
-              _view == AuthView.registerCard &&
-              !_nfcCompleted &&
-              !_isNavigating) {
-            _handleCardRegister(simulate: false);
-          }
-        });
+        if (hardwareUnavailable) {
+          _showSnack(rawErr, isError: true);
+        } else {
+          _showSnack(
+            '$rawErr Re-scanning in 5s...',
+            isError: true,
+          );
+          _start5SecRetryTimer(() {
+            if (mounted &&
+                _view == AuthView.registerCard &&
+                !_nfcCompleted &&
+                !_isNavigating) {
+              _handleCardRegister(simulate: false);
+            }
+          });
+        }
       }
     } catch (e) {
       if (!mounted) return;
@@ -1039,15 +1067,19 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
               ),
             ),
             const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildWordmark(size: 24),
-                Text(
-                  'JCOP4 Turing-Composed NFC Wallet',
-                  style: T.text(11, color: T.white(.50)),
-                ),
-              ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildWordmark(size: 24),
+                  Text(
+                    'JCOP4 Turing-Composed NFC Wallet',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: T.text(11, color: T.white(.50)),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -1092,6 +1124,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           height: 40,
+          padding: const EdgeInsets.symmetric(horizontal: 6),
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: active ? T.white(.20) : Colors.transparent,
@@ -1100,12 +1133,16 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                 ? Border.all(color: T.white(.30), width: 0.5)
                 : null,
           ),
-          child: Text(
-            label,
-            style: T.text(
-              12.5,
-              w: T.w700,
-              color: active ? Colors.white : T.white(.55),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              label,
+              maxLines: 1,
+              style: T.text(
+                12.5,
+                w: T.w700,
+                color: active ? Colors.white : T.white(.55),
+              ),
             ),
           ),
         ),
@@ -1125,7 +1162,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
         // Hero NFC Tap Card
         PressScale(
           scale: 0.98,
-          onTap: _handleNFCTapLogin,
+          onTap: () => _handleNFCTapLogin(userInitiated: true),
           child: Glass(
             kind: GlassKind.tint,
             padding: const EdgeInsets.all(22),
@@ -1198,8 +1235,12 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  'One tap · hardware-verified · single-action locked',
-                  style: T.text(11.5, color: T.white(.55)),
+                  _nfcErrorNote ??
+                      'One tap · hardware-verified · single-action locked',
+                  style: T.text(
+                    11.5,
+                    color: _nfcErrorNote != null ? T.amber300 : T.white(.55),
+                  ),
                   textAlign: TextAlign.center,
                 ),
               ],
@@ -1242,49 +1283,58 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                       _pinController.clear();
                     });
                   },
-                  child: Container(
-                    padding: const EdgeInsets.fromLTRB(6, 6, 14, 6),
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? T.op(T.cyan400, .18)
-                          : T.glassPillFill,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                        color: isSelected ? T.cyan300 : T.glassPillBorder,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 260),
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(6, 6, 14, 6),
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? T.op(T.cyan400, .18)
+                            : T.glassPillFill,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: isSelected ? T.cyan300 : T.glassPillBorder,
+                        ),
                       ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 34,
-                          height: 34,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: T.btnLiquidGradient,
-                          ),
-                          alignment: Alignment.center,
-                          child: Text(
-                            initials.isEmpty ? 'U' : initials,
-                            style: T.text(11, w: T.w800),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              acc.name,
-                              style: T.text(12, w: T.w600),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 34,
+                            height: 34,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: T.btnLiquidGradient,
                             ),
-                            Text(
-                              '${acc.email} · ${acc.transactionCount} tx',
-                              style: T.text(10, color: T.white(.45)),
+                            alignment: Alignment.center,
+                            child: Text(
+                              initials.isEmpty ? 'U' : initials,
+                              style: T.text(11, w: T.w800),
                             ),
-                          ],
-                        ),
-                      ],
+                          ),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  acc.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: T.text(12, w: T.w600),
+                                ),
+                                Text(
+                                  '${acc.email} · ${acc.transactionCount} tx',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: T.text(10, color: T.white(.45)),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 );

@@ -94,8 +94,6 @@ class Glass extends StatelessWidget {
     if (fill != null) { color = fill; grad = null; }
     final br = borderRadius ?? BorderRadius.circular(r);
     final inner = Container(
-      width: width,
-      height: height,
       padding: padding,
       decoration: BoxDecoration(
         borderRadius: br,
@@ -119,15 +117,37 @@ class Glass extends StatelessWidget {
         ),
       ),
     );
-    Widget body = Stack(children: [
-      blur ? ClipRRect(borderRadius: br, child: BackdropFilter(filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma), child: inner)) : inner,
-      Positioned.fill(child: IgnorePointer(child: ClipRRect(borderRadius: br, child: Stack(children: [highlight])))),
-    ]);
+    Widget body = Stack(
+      fit: StackFit.passthrough,
+      children: [
+        blur
+            ? ClipRRect(
+                borderRadius: br,
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+                  child: inner,
+                ),
+              )
+            : ClipRRect(borderRadius: br, child: inner),
+        Positioned.fill(
+          child: IgnorePointer(
+            child: ClipRRect(
+              borderRadius: br,
+              child: Stack(children: [highlight]),
+            ),
+          ),
+        ),
+      ],
+    );
     body = Container(
-      margin: margin,
+      width: width,
+      height: height,
       decoration: BoxDecoration(borderRadius: br, boxShadow: shadow),
       child: body,
     );
+    if (margin != null) {
+      body = Padding(padding: margin!, child: body);
+    }
     return body;
   }
 }
@@ -148,7 +168,18 @@ class Btn extends StatelessWidget {
 
   /// Convenience: text label.
   factory Btn.text(String label, {Key? key, VoidCallback? onTap, bool disabled = false, BtnVariant variant = BtnVariant.primary, double? width, EdgeInsetsGeometry padding = const EdgeInsets.symmetric(horizontal: 20)}) =>
-      Btn(key: key, onTap: onTap, disabled: disabled, variant: variant, width: width, padding: padding, child: Text(label));
+      Btn(
+        key: key,
+        onTap: onTap,
+        disabled: disabled,
+        variant: variant,
+        width: width,
+        padding: padding,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -372,8 +403,7 @@ class Numpad extends StatelessWidget {
       physics: const NeverScrollableScrollPhysics(),
       mainAxisSpacing: 10,
       crossAxisSpacing: 10,
-      mainAxisExtent: null,
-      childAspectRatio: 1.9,
+      mainAxisExtent: T.keyH,
       children: [
         for (final k in keys)
           k.isEmpty
@@ -387,7 +417,6 @@ class Numpad extends StatelessWidget {
                   child: Glass(
                     kind: GlassKind.pill,
                     radius: T.rKey,
-                    height: T.keyH,
                     child: Center(child: k == '⌫' ? Icon(LucideIcons.delete, size: 20, color: Colors.white) : Text(k, style: T.text(20, w: T.w600))),
                   ),
                 ),
@@ -448,8 +477,11 @@ class SectionHeader extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.only(bottom: 10),
         child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Text(title, style: T.text(15, w: T.w700)),
-          if (trailing != null) trailing!,
+          Expanded(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: T.text(15, w: T.w700))),
+          if (trailing != null) ...[
+            const SizedBox(width: 8),
+            trailing!,
+          ],
         ]),
       );
 }
@@ -462,7 +494,7 @@ class LinkText extends StatelessWidget {
   @override
   Widget build(BuildContext context) => GestureDetector(
         onTap: onTap,
-        child: Text(text, style: T.text(11, color: T.white(.35)).copyWith(decoration: TextDecoration.underline, decorationColor: T.white(.35))),
+        child: Text(text, textAlign: TextAlign.center, style: T.text(11, color: T.white(.35)).copyWith(decoration: TextDecoration.underline, decorationColor: T.white(.35))),
       );
 }
 
@@ -664,7 +696,8 @@ class _SheetBody extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
                   child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                    Text(title, style: T.text(17, w: T.w700)),
+                    Expanded(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: T.text(17, w: T.w700))),
+                    const SizedBox(width: 8),
                     GlassIconBtn(icon: LucideIcons.x, onTap: () => Navigator.of(context).maybePop()),
                   ]),
                 ),
@@ -682,25 +715,73 @@ class _SheetBody extends StatelessWidget {
 OverlayEntry? _toast;
 Timer? _toastTimer;
 
-/// Top-center glass-strong pill toast (auto-dismiss, default 2.2s).
-void showToast(BuildContext context, String message, {Duration duration = const Duration(milliseconds: 2200)}) {
+/// Top-center glass-strong pill toast (auto-dismiss, default 2.2s / 3.2s for errors).
+void showToast(
+  BuildContext context,
+  String message, {
+  bool isError = false,
+  Duration? duration,
+}) {
   _toastTimer?.cancel();
   _toast?.remove();
   final overlay = Overlay.of(context, rootOverlay: true);
-  final top = MediaQuery.of(context).padding.top + 56;
+  final top = MediaQuery.of(context).padding.top + 52;
   final entry = OverlayEntry(
     builder: (_) => Positioned(
-      top: top, left: 0, right: 0,
+      top: top,
+      left: 16,
+      right: 16,
       child: IgnorePointer(
         child: Center(
-          child: TweenAnimationBuilder<double>(
-            tween: Tween(begin: 0, end: 1),
-            duration: const Duration(milliseconds: 250),
-            curve: Curves.easeOut,
-            builder: (_, v, c) => Opacity(opacity: v, child: Transform.translate(offset: Offset(0, -20 * (1 - v)), child: c)),
-            child: Material(
-              type: MaterialType.transparency,
-              child: Glass(kind: GlassKind.strong, radius: 999, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), child: Text(message, style: T.text(12, w: T.w600))),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: 1),
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeOut,
+              builder: (_, v, c) => Opacity(
+                opacity: v,
+                child: Transform.translate(
+                  offset: Offset(0, -20 * (1 - v)),
+                  child: c,
+                ),
+              ),
+              child: Material(
+                type: MaterialType.transparency,
+                child: Glass(
+                  kind: GlassKind.strong,
+                  fill: isError ? const Color(0xEB991B1B) : null,
+                  radius: isError ? 18 : 999,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  child: isError
+                      ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              LucideIcons.alertCircle,
+                              size: 16,
+                              color: Colors.white,
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                message,
+                                style: T.text(12, w: T.w600, color: Colors.white, height: 1.35),
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        )
+                      : Text(
+                          message,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: T.text(12, w: T.w600, color: Colors.white),
+                        ),
+                ),
+              ),
             ),
           ),
         ),
@@ -709,10 +790,13 @@ void showToast(BuildContext context, String message, {Duration duration = const 
   );
   _toast = entry;
   overlay.insert(entry);
-  _toastTimer = Timer(duration, () {
-    entry.remove();
-    if (_toast == entry) _toast = null;
-  });
+  _toastTimer = Timer(
+    duration ?? Duration(milliseconds: isError ? 3200 : 2200),
+    () {
+      entry.remove();
+      if (_toast == entry) _toast = null;
+    },
+  );
 }
 
 // ───────────────────────── NFC tap simulation ─────────────────────────

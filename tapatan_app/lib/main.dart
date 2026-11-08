@@ -40,6 +40,12 @@ class BantayApp extends StatelessWidget {
         ),
         splashFactory: NoSplash.splashFactory,
         highlightColor: Colors.transparent,
+        snackBarTheme: SnackBarThemeData(
+          backgroundColor: T.glassStrongFill,
+          contentTextStyle: T.text(12.5, w: T.w600, color: Colors.white),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
         pageTransitionsTheme: const PageTransitionsTheme(
           builders: <TargetPlatform, PageTransitionsBuilder>{
             TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),

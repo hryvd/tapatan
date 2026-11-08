@@ -499,42 +499,55 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     return ListView(
       physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(20, 10, 20, T.navBottomPad),
+      padding: EdgeInsets.fromLTRB(
+        20,
+        10,
+        20,
+        T.navBottomPad + MediaQuery.of(context).padding.bottom,
+      ),
       children: [
         // ── 1. Top Greeting + Notification + Avatar ────────────────────────
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(_greeting(), style: T.text(12, color: T.white(.55))),
-                Text(firstName, style: T.text(21, w: T.w800)),
-                const SizedBox(height: 4),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: T.op(T.emerald400, .15),
-                    borderRadius: BorderRadius.circular(99),
-                    border: Border.all(color: T.op(T.emerald300, .35)),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_greeting(), style: T.text(12, color: T.white(.55))),
+                  Text(
+                    firstName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: T.text(21, w: T.w800),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(LucideIcons.badgeCheck,
-                          size: 12, color: T.emerald300),
-                      const SizedBox(width: 4),
-                      Text(
-                        'KYC Verified',
-                        style: T.text(10, w: T.w600, color: T.emerald300),
-                      ),
-                    ],
+                  const SizedBox(height: 4),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: T.op(T.emerald400, .15),
+                      borderRadius: BorderRadius.circular(99),
+                      border: Border.all(color: T.op(T.emerald300, .35)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(LucideIcons.badgeCheck,
+                            size: 12, color: T.emerald300),
+                        const SizedBox(width: 4),
+                        Text(
+                          'KYC Verified',
+                          style: T.text(10, w: T.w600, color: T.emerald300),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
+            const SizedBox(width: 12),
             Row(
               children: [
                 PressScale(
@@ -657,22 +670,34 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Wallet balance',
-                            style: T.text(11, color: T.white(.50))),
-                        const SizedBox(height: 2),
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 220),
-                          child: Text(
-                            _hideBalance ? '₱ ••••••' : _peso(user.balance),
-                            key: ValueKey(_hideBalance),
-                            style: T.text(28, w: T.w800, height: 1.05),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Wallet balance',
+                              style: T.text(11, color: T.white(.50))),
+                          const SizedBox(height: 2),
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 220),
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              key: ValueKey(_hideBalance),
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  _hideBalance
+                                      ? '₱ ••••••'
+                                      : _peso(user.balance),
+                                  style: T.text(28, w: T.w800, height: 1.05),
+                                ),
+                              ),
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
+                    const SizedBox(width: 12),
                     GlassIconBtn(
                       icon:
                           _hideBalance ? LucideIcons.eyeOff : LucideIcons.eye,
@@ -769,19 +794,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         const SizedBox(height: 16),
 
         // ── 3. Quick Actions Row ───────────────────────────────────────────
-        Row(
-          children: [
-            _quickTile(LucideIcons.banknote, 'Cash In', _openCashInSheet),
-            const SizedBox(width: 10),
-            _quickTile(
-                LucideIcons.send, 'Send / P2P', () => _openSendSheet(user)),
-            const SizedBox(width: 10),
-            _quickTile(LucideIcons.nfc, 'Tap to Pay',
-                () => widget.onOpenOverlay?.call('nfc')),
-            const SizedBox(width: 10),
-            _quickTile(
-                LucideIcons.scanLine, 'Scan QR', () => _openQrSheet(user)),
-          ],
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _quickTile(LucideIcons.banknote, 'Cash In', _openCashInSheet),
+              const SizedBox(width: 10),
+              _quickTile(
+                  LucideIcons.send, 'Send / P2P', () => _openSendSheet(user)),
+              const SizedBox(width: 10),
+              _quickTile(LucideIcons.nfc, 'Tap to Pay',
+                  () => widget.onOpenOverlay?.call('nfc')),
+              const SizedBox(width: 10),
+              _quickTile(
+                  LucideIcons.scanLine, 'Scan QR', () => _openQrSheet(user)),
+            ],
+          ),
         ),
 
         // ── 4. Pending Sar-E Payment Banner ────────────────────────────────
@@ -971,17 +999,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         onTap: onTap,
         child: Glass(
           radius: 22,
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
           child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(icon, size: 22, color: T.cyan300),
               const SizedBox(height: 6),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: T.text(10.5, w: T.w600),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  textAlign: TextAlign.center,
+                  style: T.text(10.5, w: T.w600),
+                ),
               ),
             ],
           ),

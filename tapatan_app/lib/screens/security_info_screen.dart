@@ -190,24 +190,36 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Row(
-                            children: [
-                              GlassIconBtn(
-                                icon: LucideIcons.arrowLeft,
-                                onTap: () => Navigator.pop(context),
-                                size: 36,
-                                iconSize: 18,
-                              ),
-                              const SizedBox(width: 12),
-                              Row(
-                                children: [
-                                  const Icon(LucideIcons.shieldCheck, size: 20, color: Colors.white),
-                                  const SizedBox(width: 6),
-                                  Text('Security Center', style: T.h3.copyWith(fontSize: 18)),
-                                ],
-                              ),
-                            ],
+                          Expanded(
+                            child: Row(
+                              children: [
+                                GlassIconBtn(
+                                  icon: LucideIcons.arrowLeft,
+                                  onTap: () => Navigator.pop(context),
+                                  size: 36,
+                                  iconSize: 18,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Row(
+                                    children: [
+                                      const Icon(LucideIcons.shieldCheck, size: 20, color: Colors.white),
+                                      const SizedBox(width: 6),
+                                      Flexible(
+                                        child: Text(
+                                          'Security Center',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: T.h3.copyWith(fontSize: 18),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
+                          const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                             decoration: BoxDecoration(
@@ -326,11 +338,11 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
 
               // ── Tab Content ─────────────────────────────────────────────
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(
+                padding: EdgeInsets.fromLTRB(
                   T.screenPad,
                   4,
                   T.screenPad,
-                  T.navBottomPad + 24,
+                  T.navBottomPad + MediaQuery.of(context).padding.bottom + 24,
                 ),
                 sliver: SliverList(
                   delegate: SliverChildListDelegate([
@@ -362,24 +374,30 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
             borderRadius: BorderRadius.circular(12),
             boxShadow: active ? T.glow(T.white(0.3), 8) : null,
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                size: 14,
-                color: active ? const Color(0xFF0F172A) : T.white(0.60),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    icon,
+                    size: 14,
+                    color: active ? const Color(0xFF0F172A) : T.white(0.60),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: T.text(
+                      12,
+                      w: active ? T.w700 : T.w500,
+                      color: active ? const Color(0xFF0F172A) : T.white(0.60),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: T.text(
-                  12,
-                  w: active ? T.w700 : T.w500,
-                  color: active ? const Color(0xFF0F172A) : T.white(0.60),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -405,38 +423,41 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
   List<Widget> _buildOverviewTab() {
     return [
       // 3-Col Dual Layer Summary Cards
-      Row(
-        children: [
-          Expanded(
-            child: _metricMiniCard(
-              '94.1%',
-              'NFC Layer',
-              'ECDSA P-256',
-              LucideIcons.wifi,
-              const Color(0xFF60A5FA),
+      IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: _metricMiniCard(
+                '94.1%',
+                'NFC Layer',
+                'ECDSA P-256',
+                LucideIcons.wifi,
+                const Color(0xFF60A5FA),
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: _metricMiniCard(
-              '94.7%',
-              'ML Layer',
-              'CNN-LSTM',
-              LucideIcons.brain,
-              const Color(0xFF34D399),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _metricMiniCard(
+                '94.7%',
+                'ML Layer',
+                'CNN-LSTM',
+                LucideIcons.brain,
+                const Color(0xFF34D399),
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: _metricMiniCard(
-              '99.1%',
-              'Combined',
-              'Dual-Layer',
-              LucideIcons.shieldCheck,
-              const Color(0xFFA78BFA),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _metricMiniCard(
+                '99.1%',
+                'Combined',
+                'Dual-Layer',
+                LucideIcons.shieldCheck,
+                const Color(0xFFA78BFA),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
 
       const SizedBox(height: 14),
@@ -508,7 +529,10 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('STRIDE Threat Matrix', style: T.text(14, w: T.w700)),
+                Expanded(
+                  child: Text('STRIDE Threat Matrix', style: T.text(14, w: T.w700), maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+                const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
@@ -524,28 +548,31 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
               ],
             ),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _strideCountBox(
-                    '${kStrideMatrix.where((s) => s.status == "Mitigated").length}',
-                    'Mitigated',
-                    T.emerald,
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: _strideCountBox(
+                      '${kStrideMatrix.where((s) => s.status == "Mitigated").length}',
+                      'Mitigated',
+                      T.emerald,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _strideCountBox(
-                    '${kStrideMatrix.where((s) => s.status == "Partial").length}',
-                    'Partial',
-                    T.amber500,
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _strideCountBox(
+                      '${kStrideMatrix.where((s) => s.status == "Partial").length}',
+                      'Partial',
+                      T.amber500,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _strideCountBox('0', 'Unmitigated', T.red400),
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _strideCountBox('0', 'Unmitigated', T.red400),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -652,33 +679,39 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                   child: const Icon(LucideIcons.creditCard, color: Color(0xFF60A5FA), size: 20),
                 ),
                 const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('JCOP4 J3R150 / Feitian A40CR', style: T.text(14, w: T.w700)),
-                    Text(
-                      'Java Card Hardware Secure Element',
-                      style: T.caption.copyWith(color: T.white(0.45)),
-                    ),
-                  ],
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('JCOP4 J3R150 / Feitian A40CR', style: T.text(14, w: T.w700)),
+                      Text(
+                        'Java Card Hardware Secure Element',
+                        style: T.caption.copyWith(color: T.white(0.45)),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _specBox('Protocol', 'FIDO2 / CTAP2'),
-                _specBox('Crypto', 'ECDSA P-256'),
-                _specBox('NFC Standard', 'ISO/IEC 14443'),
-                _specBox('Frequency', '13.56 MHz'),
-                _specBox('Range', '~4 cm proximity'),
-                _specBox('RAM', '~4 KB volatile'),
-                _specBox('EEPROM', '64 KB secure'),
-                _specBox('Certification', 'CC EAL4+ / EAL6+'),
-              ],
-            ),
+            for (final pair in const [
+              [('Protocol', 'FIDO2 / CTAP2'), ('Crypto', 'ECDSA P-256')],
+              [('NFC Standard', 'ISO/IEC 14443'), ('Frequency', '13.56 MHz')],
+              [('Range', '~4 cm proximity'), ('RAM', '~4 KB volatile')],
+              [('EEPROM', '64 KB secure'), ('Certification', 'CC EAL4+ / EAL6+')],
+            ]) ...[
+              IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: _specBox(pair[0].$1, pair[0].$2)),
+                    const SizedBox(width: 8),
+                    Expanded(child: _specBox(pair[1].$1, pair[1].$2)),
+                  ],
+                ),
+              ),
+              if (pair[0].$1 != 'EEPROM') const SizedBox(height: 8),
+            ],
           ],
         ),
       ),
@@ -812,7 +845,14 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                       children: [
                         Row(
                           children: [
-                            Text(key.name, style: T.text(13, w: T.w600)),
+                            Flexible(
+                              child: Text(
+                                key.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: T.text(13, w: T.w600),
+                              ),
+                            ),
                             const SizedBox(width: 6),
                             Badge2(
                               key.status,
@@ -1000,24 +1040,44 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Model Architecture', style: T.text(14, w: T.w700)),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text('Model Architecture', style: T.text(14, w: T.w700), maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+                const SizedBox(width: 8),
+                Text('6-Stage Pipeline', style: T.mono(10, color: T.white(0.45))),
+              ],
+            ),
             const SizedBox(height: 12),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              physics: const BouncingScrollPhysics(),
+            IntrinsicHeight(
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _archNode('Input', 'URL / Feat', LucideIcons.database, const Color(0xFF94A3B8)),
+                  Expanded(child: _archNode('Input', 'URL / Feat', LucideIcons.database, const Color(0xFF94A3B8))),
                   _archArrow(),
-                  _archNode('Conv1D', 'Local feat', LucideIcons.layers, const Color(0xFF60A5FA)),
+                  Expanded(child: _archNode('Conv1D', 'Local feat', LucideIcons.layers, const Color(0xFF60A5FA))),
                   _archArrow(),
-                  _archNode('MaxPool', 'Downsample', LucideIcons.layers, const Color(0xFF60A5FA)),
+                  Expanded(child: _archNode('MaxPool', 'Downsample', LucideIcons.layers, const Color(0xFF60A5FA))),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Center(
+                child: Icon(LucideIcons.arrowDown, size: 13, color: T.white(0.35)),
+              ),
+            ),
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: _archNode('LSTM', 'Sequences', LucideIcons.gitBranch, const Color(0xFF34D399))),
                   _archArrow(),
-                  _archNode('LSTM', 'Sequences', LucideIcons.gitBranch, const Color(0xFF34D399)),
+                  Expanded(child: _archNode('Dense', 'Classify', LucideIcons.cpu, const Color(0xFFA78BFA))),
                   _archArrow(),
-                  _archNode('Dense', 'Classify', LucideIcons.cpu, const Color(0xFFA78BFA)),
-                  _archArrow(),
-                  _archNode('Output', 'Safe/Phish', LucideIcons.target, const Color(0xFFFBBF24)),
+                  Expanded(child: _archNode('Output', 'Safe/Phish', LucideIcons.target, const Color(0xFFFBBF24))),
                 ],
               ),
             ),
@@ -1028,41 +1088,50 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
       const SizedBox(height: 14),
 
       // Core Metrics 2x2 Grid
-      Row(
-        children: [
-          Expanded(
-            child: _metricSquareCard('Accuracy', '94.7%', 'Target: >90%', LucideIcons.target, const Color(0xFF60A5FA)),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: _metricSquareCard('Precision', '93.2%', 'PhishTank + UCI', LucideIcons.award, const Color(0xFF34D399)),
-          ),
-        ],
+      IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: _metricSquareCard('Accuracy', '94.7%', 'Target: >90%', LucideIcons.target, const Color(0xFF60A5FA)),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _metricSquareCard('Precision', '93.2%', 'PhishTank + UCI', LucideIcons.award, const Color(0xFF34D399)),
+            ),
+          ],
+        ),
       ),
       const SizedBox(height: 8),
-      Row(
-        children: [
-          Expanded(
-            child: _metricSquareCard('Recall', '95.1%', 'FPR < 5% target', LucideIcons.activity, const Color(0xFFA78BFA)),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: _metricSquareCard('F1 Score', '94.1%', 'Harmonic mean', LucideIcons.barChart2, const Color(0xFFFB923C)),
-          ),
-        ],
+      IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: _metricSquareCard('Recall', '95.1%', 'FPR < 5% target', LucideIcons.activity, const Color(0xFFA78BFA)),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _metricSquareCard('F1 Score', '94.1%', 'Harmonic mean', LucideIcons.barChart2, const Color(0xFFFB923C)),
+            ),
+          ],
+        ),
       ),
 
       const SizedBox(height: 14),
 
       // AUC-ROC, Latency, Features Row
-      Row(
-        children: [
-          Expanded(child: _metricMiniCard('96.3%', 'AUC-ROC', 'Metric', LucideIcons.trendingUp, const Color(0xFF22D3EE))),
-          const SizedBox(width: 8),
-          Expanded(child: _metricMiniCard('<500ms', 'Latency', 'Target met', LucideIcons.zap, const Color(0xFFFCD34D))),
-          const SizedBox(width: 8),
-          Expanded(child: _metricMiniCard('42+', 'Features', 'Engineered', LucideIcons.eye, const Color(0xFFF472B6))),
-        ],
+      IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: _metricMiniCard('96.3%', 'AUC-ROC', 'Metric', LucideIcons.trendingUp, const Color(0xFF22D3EE))),
+            const SizedBox(width: 8),
+            Expanded(child: _metricMiniCard('<500ms', 'Latency', 'Target met', LucideIcons.zap, const Color(0xFFFCD34D))),
+            const SizedBox(width: 8),
+            Expanded(child: _metricMiniCard('42+', 'Features', 'Engineered', LucideIcons.eye, const Color(0xFFF472B6))),
+          ],
+        ),
       ),
 
       const SizedBox(height: 14),
@@ -1138,14 +1207,17 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
             const SizedBox(height: 8),
             _datasetItem('UCI Phishing Dataset', 'Machine learning benchmark (phishing URLs)', 'Primary'),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(child: _datasetStat('Split', '80 / 20')),
-                const SizedBox(width: 8),
-                Expanded(child: _datasetStat('Strategy', 'Stratified')),
-                const SizedBox(width: 8),
-                Expanded(child: _datasetStat('Test runs', '30+')),
-              ],
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: _datasetStat('Split', '80 / 20')),
+                  const SizedBox(width: 8),
+                  Expanded(child: _datasetStat('Strategy', 'Stratified')),
+                  const SizedBox(width: 8),
+                  Expanded(child: _datasetStat('Test runs', '30+')),
+                ],
+              ),
             ),
           ],
         ),
@@ -1165,7 +1237,10 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('STRIDE Threat Resistance', style: T.text(14, w: T.w700)),
+                  Expanded(
+                    child: Text('STRIDE Threat Resistance', style: T.text(14, w: T.w700), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
+                  const SizedBox(width: 8),
                   Text('Table 3.1', style: T.mono(10, color: T.white(0.40))),
                 ],
               ),
@@ -1282,7 +1357,14 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                             child: Text(s.threat, style: T.mono(9, color: T.white(0.60))),
                           ),
                           const SizedBox(width: 6),
-                          Text(s.layer, style: T.caption.copyWith(color: T.white(0.40), fontSize: 10)),
+                          Flexible(
+                            child: Text(
+                              s.layer,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: T.caption.copyWith(color: T.white(0.40), fontSize: 10),
+                            ),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 2),
@@ -1295,6 +1377,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                     ],
                   ),
                 ),
+                const SizedBox(width: 8),
                 Badge2(
                   s.status,
                   color: isMitigated ? T.emerald : T.amber500,
@@ -1331,15 +1414,32 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
   static Widget _metricMiniCard(String val, String label, String sub, IconData icon, Color color) {
     return Glass(
       kind: GlassKind.glass,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
       child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Icon(icon, size: 16, color: color),
+          Icon(icon, size: 17, color: color),
           const SizedBox(height: 6),
-          Text(val, style: T.mono(14, w: T.w800, color: color)),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(val, style: T.mono(14.5, w: T.w800, color: color)),
+          ),
           const SizedBox(height: 2),
-          Text(label, style: T.caption.copyWith(fontSize: 10, color: T.white(0.60))),
-          Text(sub, style: T.caption.copyWith(fontSize: 8.5, color: T.white(0.40))),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: T.caption.copyWith(fontSize: 10.5, fontWeight: FontWeight.w600, color: T.white(0.72)),
+          ),
+          Text(
+            sub,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: T.caption.copyWith(fontSize: 8.5, color: T.white(0.45)),
+          ),
         ],
       ),
     );
@@ -1350,14 +1450,19 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
       kind: GlassKind.glass,
       padding: const EdgeInsets.all(14),
       child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(icon, size: 18, color: color),
           const SizedBox(height: 8),
-          Text(val, style: T.mono(20, w: T.w800, color: color)),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(val, style: T.mono(20, w: T.w800, color: color)),
+          ),
           const SizedBox(height: 2),
-          Text(label, style: T.text(12, w: T.w600, color: Colors.white)),
-          Text(sub, style: T.caption.copyWith(fontSize: 9, color: T.white(0.40))),
+          Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: T.text(12, w: T.w600, color: Colors.white)),
+          Text(sub, maxLines: 1, overflow: TextOverflow.ellipsis, style: T.caption.copyWith(fontSize: 9.5, color: T.white(0.45))),
         ],
       ),
     );
@@ -1365,17 +1470,21 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
 
   static Widget _strideCountBox(String count, String label, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
       decoration: BoxDecoration(
         color: T.op(color, 0.12),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: T.op(color, 0.30)),
       ),
       child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(count, style: T.mono(18, w: T.w800, color: color)),
           const SizedBox(height: 2),
-          Text(label, style: T.caption.copyWith(fontSize: 10, color: T.white(0.60))),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(label, style: T.caption.copyWith(fontSize: 10, color: T.white(0.60))),
+          ),
         ],
       ),
     );
@@ -1383,7 +1492,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
 
   static Widget _specBox(String label, String value) {
     return Container(
-      width: 140,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: T.white(0.06),
@@ -1392,6 +1500,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(label, style: T.caption.copyWith(fontSize: 9, color: T.white(0.45))),
           const SizedBox(height: 2),
@@ -1460,19 +1569,26 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
 
   static Widget _archNode(String label, String sub, IconData icon, Color color) {
     return Container(
-      width: 68,
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
       decoration: BoxDecoration(
         color: T.op(color, 0.12),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: T.op(color, 0.35)),
       ),
       child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 14, color: color),
-          const SizedBox(height: 4),
-          Text(label, style: T.text(10, w: T.w700, color: color)),
-          Text(sub, style: T.caption.copyWith(fontSize: 8, color: T.white(0.45)), textAlign: TextAlign.center),
+          Icon(icon, size: 15, color: color),
+          const SizedBox(height: 5),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(label, style: T.text(10.5, w: T.w700, color: color)),
+          ),
+          const SizedBox(height: 1),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(sub, style: T.caption.copyWith(fontSize: 8.5, color: T.white(0.50)), textAlign: TextAlign.center),
+          ),
         ],
       ),
     );
@@ -1492,7 +1608,10 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(title, style: T.caption.copyWith(color: T.white(0.70))),
+            Expanded(
+              child: Text(title, style: T.caption.copyWith(color: T.white(0.70)), maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+            const SizedBox(width: 8),
             Text('${(val * 100).toStringAsFixed(1)}%', style: T.mono(11, w: T.w700, color: color)),
           ],
         ),
@@ -1516,7 +1635,10 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(model, style: T.caption.copyWith(color: T.white(0.75))),
+            Expanded(
+              child: Text(model, style: T.caption.copyWith(color: T.white(0.75)), maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+            const SizedBox(width: 8),
             Text('$acc%', style: T.mono(11, w: T.w700, color: color)),
           ],
         ),
@@ -1540,7 +1662,10 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(name, style: T.caption.copyWith(color: T.white(0.70))),
+            Expanded(
+              child: Text(name, style: T.caption.copyWith(color: T.white(0.70)), maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+            const SizedBox(width: 8),
             Text('$pct%', style: T.mono(11, w: T.w700, color: Colors.white)),
           ],
         ),
@@ -1612,14 +1737,18 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: T.text(12, w: T.w600, color: Colors.white)),
-                Text('Target: $target', style: T.caption.copyWith(color: T.white(0.45), fontSize: 9.5)),
-              ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: T.text(12, w: T.w600, color: Colors.white)),
+                  Text('Target: $target', style: T.caption.copyWith(color: T.white(0.45), fontSize: 9.5)),
+                ],
+              ),
             ),
+            const SizedBox(width: 8),
             Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Text(achieved, style: T.mono(11, w: T.w600, color: T.white(0.85))),
                 const SizedBox(width: 6),

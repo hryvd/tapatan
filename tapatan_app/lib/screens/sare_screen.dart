@@ -413,11 +413,13 @@ class _SarEScreenState extends ConsumerState<SarEScreen> {
 
                 // ── 2-Column Product Grid ─────────────────────────────────
                 SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(
+                  padding: EdgeInsets.fromLTRB(
                     T.screenPad,
                     4,
                     T.screenPad,
-                    T.navBottomPad + 20,
+                    T.navBottomPad +
+                        MediaQuery.of(context).padding.bottom +
+                        (_cartItemCount > 0 ? 84 : 20),
                   ),
                   sliver: SliverGrid(
                     gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -581,7 +583,7 @@ class _SarEScreenState extends ConsumerState<SarEScreen> {
             // ── Floating Cart Bar (1:1 with React SarEScreen) ───────────────
             if (_cartItemCount > 0)
               Positioned(
-                bottom: 84, // elevated above bottom nav
+                bottom: MediaQuery.of(context).padding.bottom + 86,
                 left: T.screenPad,
                 right: T.screenPad,
                 child: Glass(

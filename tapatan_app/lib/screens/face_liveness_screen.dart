@@ -311,9 +311,9 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Camera preview
+          // Camera preview (Aspect-ratio preserving BoxFit.cover to eliminate warping)
           if (_isInitialized && _controller != null)
-            CameraPreview(_controller!)
+            _buildCameraPreview(context)
           else if (_errorMessage != null)
             _buildError()
           else
@@ -363,6 +363,31 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildCameraPreview(BuildContext context) {
+    final previewSize = _controller?.value.previewSize;
+    if (previewSize == null) {
+      return Center(child: CameraPreview(_controller!));
+    }
+
+    final isPortrait =
+        MediaQuery.of(context).orientation == Orientation.portrait;
+    final double camW = isPortrait ? previewSize.height : previewSize.width;
+    final double camH = isPortrait ? previewSize.width : previewSize.height;
+
+    return ClipRect(
+      child: SizedBox.expand(
+        child: FittedBox(
+          fit: BoxFit.cover,
+          child: SizedBox(
+            width: camW,
+            height: camH,
+            child: CameraPreview(_controller!),
+          ),
+        ),
       ),
     );
   }

@@ -195,11 +195,11 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
 
           // ── Main Content List ───────────────────────────────────────────
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(
+            padding: EdgeInsets.fromLTRB(
               T.screenPad,
               8,
               T.screenPad,
-              T.navBottomPad + 20,
+              T.navBottomPad + MediaQuery.of(context).padding.bottom + 20,
             ),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
@@ -210,20 +210,29 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Available Money (${user.name.trim().isNotEmpty ? user.name.trim() : "Account"})',
-                            style: T.caption.copyWith(color: T.white(0.55), fontSize: 12),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '₱${user.balance.toStringAsFixed(2)}',
-                            style: T.mono(24, w: T.w800, color: T.cyan300),
-                          ),
-                        ],
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Available Money (${user.name.trim().isNotEmpty ? user.name.trim() : "Account"})',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: T.caption.copyWith(color: T.white(0.55), fontSize: 12),
+                            ),
+                            const SizedBox(height: 4),
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                '₱${user.balance.toStringAsFixed(2)}',
+                                style: T.mono(24, w: T.w800, color: T.cyan300),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
+                      const SizedBox(width: 10),
                       const Badge2('Synced · TPT4', color: T.emerald400),
                     ],
                   ),
@@ -232,80 +241,91 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                 const SizedBox(height: 12),
 
                 // ── Spent / Income Cards Row ──────────────────────────────
-                Row(
-                  children: [
-                    Expanded(
-                      child: Glass(
-                        kind: GlassKind.glass,
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Icon(LucideIcons.arrowUpRight, color: T.red400, size: 18),
-                                Text(
-                                  _timeframe == '7 Days'
-                                      ? '7D'
-                                      : (_timeframe == '30 Days' ? '30D' : '1Y'),
-                                  style: T.mono(10, color: T.white(0.40)),
+                IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: Glass(
+                          kind: GlassKind.glass,
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Icon(LucideIcons.arrowUpRight, color: T.red400, size: 18),
+                                  Text(
+                                    _timeframe == '7 Days'
+                                        ? '7D'
+                                        : (_timeframe == '30 Days' ? '30D' : '1Y'),
+                                    style: T.mono(10, color: T.white(0.40)),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  '₱${totalSpent.toStringAsFixed(2)}',
+                                  style: T.mono(18, w: T.w800, color: T.red400),
                                 ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              '₱${totalSpent.toStringAsFixed(2)}',
-                              style: T.mono(18, w: T.w800, color: T.red400),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _timeframe == '7 Days'
-                                  ? 'Weekly Spent'
-                                  : (_timeframe == '30 Days' ? 'Monthly Spent' : 'Total Spent'),
-                              style: T.caption.copyWith(color: T.white(0.50)),
-                            ),
-                          ],
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _timeframe == '7 Days'
+                                    ? 'Weekly Spent'
+                                    : (_timeframe == '30 Days' ? 'Monthly Spent' : 'Total Spent'),
+                                style: T.caption.copyWith(color: T.white(0.50)),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Glass(
-                        kind: GlassKind.glass,
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Icon(LucideIcons.arrowDownLeft, color: T.emerald300, size: 18),
-                                Text(
-                                  _timeframe == '7 Days'
-                                      ? '7D'
-                                      : (_timeframe == '30 Days' ? '30D' : '1Y'),
-                                  style: T.mono(10, color: T.white(0.40)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Glass(
+                          kind: GlassKind.glass,
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Icon(LucideIcons.arrowDownLeft, color: T.emerald300, size: 18),
+                                  Text(
+                                    _timeframe == '7 Days'
+                                        ? '7D'
+                                        : (_timeframe == '30 Days' ? '30D' : '1Y'),
+                                    style: T.mono(10, color: T.white(0.40)),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  '₱${totalIncome.toStringAsFixed(2)}',
+                                  style: T.mono(18, w: T.w800, color: T.emerald300),
                                 ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              '₱${totalIncome.toStringAsFixed(2)}',
-                              style: T.mono(18, w: T.w800, color: T.emerald300),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _timeframe == '7 Days'
-                                  ? 'Weekly Income'
-                                  : (_timeframe == '30 Days' ? 'Monthly Income' : 'Total Income'),
-                              style: T.caption.copyWith(color: T.white(0.50)),
-                            ),
-                          ],
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _timeframe == '7 Days'
+                                    ? 'Weekly Income'
+                                    : (_timeframe == '30 Days' ? 'Monthly Income' : 'Total Income'),
+                                style: T.caption.copyWith(color: T.white(0.50)),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
 
                 const SizedBox(height: 14),

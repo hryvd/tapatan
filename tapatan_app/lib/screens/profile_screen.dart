@@ -844,11 +844,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     return SafeArea(
       bottom: false,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(
+        padding: EdgeInsets.fromLTRB(
           T.screenPad,
           8,
           T.screenPad,
-          T.navBottomPad,
+          T.navBottomPad + MediaQuery.of(context).padding.bottom,
         ),
         children: [
           // Header

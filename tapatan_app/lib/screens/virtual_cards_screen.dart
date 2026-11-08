@@ -413,11 +413,11 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
       bottom: false,
       child: SingleChildScrollView(
         physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(
+        padding: EdgeInsets.fromLTRB(
           T.screenPad,
           10,
           T.screenPad,
-          T.navBottomPad + 16,
+          T.navBottomPad + MediaQuery.of(context).padding.bottom + 16,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,

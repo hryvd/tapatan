@@ -50,6 +50,7 @@ class LucideIcons {
   static const IconData camera = Icons.camera_alt;
   static const IconData sun = Icons.wb_sunny;
   static const IconData arrowRight = Icons.arrow_forward;
+  static const IconData arrowDown = Icons.arrow_downward;
   // NFC Debug screen icons
   static const IconData download = Icons.download;
   static const IconData settings = Icons.tune;

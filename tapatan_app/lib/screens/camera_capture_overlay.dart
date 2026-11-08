@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -21,17 +22,28 @@ Future<String> _cropImage(Map<String, dynamic> params) async {
   var original = img.decodeImage(bytes);
   if (original == null) return path;
 
-  // Assume the camera preview fills the screen (simple ratio scaling)
-  final scaleX = original.width / screenW;
-  final scaleY = original.height / screenH;
+  // Bake EXIF orientation so width & height match portrait layout seen on screen
+  original = img.bakeOrientation(original);
 
-  final x = (cropX * scaleX).toInt().clamp(0, original.width);
-  final y = (cropY * scaleY).toInt().clamp(0, original.height);
-  final w = (cropW * scaleX).toInt().clamp(0, original.width - x);
-  final h = (cropH * scaleY).toInt().clamp(0, original.height - y);
+  final double imgW = original.width.toDouble();
+  final double imgH = original.height.toDouble();
+
+  // In BoxFit.cover:
+  // displayScale is uniform: max(screenW / imgW, screenH / imgH)
+  // displayed width = imgW * displayScale
+  // displayed height = imgH * displayScale
+  final double displayScale = math.max(screenW / imgW, screenH / imgH);
+  final double displayOffsetX = (screenW - imgW * displayScale) / 2.0;
+  final double displayOffsetY = (screenH - imgH * displayScale) / 2.0;
+
+  // Convert crop frame from screen coordinates to image coordinates with zero warping
+  final int x = ((cropX - displayOffsetX) / displayScale).round().clamp(0, original.width - 1);
+  final int y = ((cropY - displayOffsetY) / displayScale).round().clamp(0, original.height - 1);
+  final int w = (cropW / displayScale).round().clamp(1, original.width - x);
+  final int h = (cropH / displayScale).round().clamp(1, original.height - y);
 
   final cropped = img.copyCrop(original, x: x, y: y, width: w, height: h);
-  final newBytes = img.encodeJpg(cropped, quality: 85);
+  final newBytes = img.encodeJpg(cropped, quality: 88);
 
   final newPath = path.replaceFirst(RegExp(r'\.jpg|\.jpeg'), '_cropped.jpg');
   await File(newPath).writeAsBytes(newBytes);
@@ -181,9 +193,9 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Camera Preview
+          // Camera Preview (Aspect-ratio preserving BoxFit.cover to eliminate warping)
           if (_isInitialized && _controller != null)
-            CameraPreview(_controller!)
+            _buildCameraPreview(context)
           else if (_errorMessage != null)
             _buildErrorState()
           else
@@ -272,6 +284,33 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildCameraPreview(BuildContext context) {
+    final previewSize = _controller?.value.previewSize;
+    if (previewSize == null) {
+      return Center(child: CameraPreview(_controller!));
+    }
+
+    // Camera previewSize is in landscape coords (width is long side, height is short side).
+    // In portrait, aspect ratio of the camera view on screen is height / width (e.g. 1080 / 1920).
+    final isPortrait =
+        MediaQuery.of(context).orientation == Orientation.portrait;
+    final double camW = isPortrait ? previewSize.height : previewSize.width;
+    final double camH = isPortrait ? previewSize.width : previewSize.height;
+
+    return ClipRect(
+      child: SizedBox.expand(
+        child: FittedBox(
+          fit: BoxFit.cover,
+          child: SizedBox(
+            width: camW,
+            height: camH,
+            child: CameraPreview(_controller!),
+          ),
+        ),
       ),
     );
   }
