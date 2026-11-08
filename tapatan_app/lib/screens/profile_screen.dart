@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/user_provider.dart';
+import '../services/account_backend_service.dart';
 import '../utils/lucide_icons.dart';
+import '../widgets/account_backend_settings_sheet.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   final VoidCallback? onSignOut;
@@ -27,12 +29,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   void _showPinModal(BuildContext context) {
+    final currentCtrl = TextEditingController();
+    final newCtrl = TextEditingController();
+    final confirmCtrl = TextEditingController();
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (_) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      builder: (sheetCtx) => Padding(
+        padding:
+            EdgeInsets.only(bottom: MediaQuery.of(sheetCtx).viewInsets.bottom),
         child: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
@@ -47,26 +54,71 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Change PIN', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
+              const Text('Change PIN',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800)),
               const SizedBox(height: 6),
-              Text('Enter your new 6-digit card PIN', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12)),
+              Text('Update your account & card authentication PIN',
+                  style: TextStyle(
+                      color: Colors.white.withOpacity(0.4), fontSize: 12)),
               const SizedBox(height: 20),
-              _buildPinField('Current PIN'),
+              _buildPinField('Current PIN', currentCtrl),
               const SizedBox(height: 12),
-              _buildPinField('New PIN'),
+              _buildPinField('New PIN', newCtrl),
               const SizedBox(height: 12),
-              _buildPinField('Confirm New PIN'),
+              _buildPinField('Confirm New PIN', confirmCtrl),
               const SizedBox(height: 20),
               GestureDetector(
-                onTap: () => Navigator.pop(context),
+                onTap: () async {
+                  if (newCtrl.text.trim() != confirmCtrl.text.trim()) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('New PINs do not match.'),
+                        backgroundColor: Color(0xFFEF4444),
+                      ),
+                    );
+                    return;
+                  }
+                  final email = ref.read(userProvider).email;
+                  final res = await AccountBackendService.changePin(
+                    email: email,
+                    currentPin: currentCtrl.text,
+                    newPin: newCtrl.text,
+                  );
+                  if (!context.mounted) return;
+                  if (res.success) {
+                    Navigator.pop(sheetCtx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Account PIN updated in database.'),
+                        backgroundColor: Color(0xFF059669),
+                      ),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(res.error ?? 'Failed to update PIN.'),
+                        backgroundColor: const Color(0xFFEF4444),
+                      ),
+                    );
+                  }
+                },
                 child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(colors: [Color(0xFF0369A1), Color(0xFF0891B2)]),
+                    gradient: const LinearGradient(
+                        colors: [Color(0xFF0369A1), Color(0xFF0891B2)]),
                     borderRadius: BorderRadius.circular(16),
                   ),
-                  child: const Center(child: Text('Save PIN', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800))),
+                  child: const Center(
+                      child: Text('Save PIN',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800))),
                 ),
               ),
             ],
@@ -76,11 +128,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
   }
 
-  Widget _buildPinField(String label) {
+  Widget _buildPinField(String label, TextEditingController controller) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12)),
+        Text(label,
+            style:
+                TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12)),
         const SizedBox(height: 6),
         Container(
           decoration: BoxDecoration(
@@ -89,13 +143,19 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             border: Border.all(color: Colors.white.withOpacity(0.12)),
           ),
           child: TextField(
+            controller: controller,
             obscureText: true,
             keyboardType: TextInputType.number,
-            style: const TextStyle(color: Colors.white, fontSize: 20, letterSpacing: 8),
+            maxLength: 6,
+            style: const TextStyle(
+                color: Colors.white, fontSize: 20, letterSpacing: 8),
             decoration: InputDecoration(
+              counterText: '',
               hintText: '● ● ● ● ● ●',
-              hintStyle: TextStyle(color: Colors.white.withOpacity(0.2), letterSpacing: 4),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              hintStyle: TextStyle(
+                  color: Colors.white.withOpacity(0.2), letterSpacing: 4),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               border: InputBorder.none,
             ),
           ),
@@ -261,6 +321,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         'items': [
           {'icon': LucideIcons.user, 'label': 'Personal Information', 'color': 0xFF0891B2, 'action': () => _showPersonalInfoModal(context, user)},
           {'icon': LucideIcons.creditCard, 'label': 'Linked Banks & Cards', 'color': 0xFF2563EB, 'badge': '${user.virtualCards.length}', 'action': () => widget.onNavigate?.call('cards')},
+          {'icon': LucideIcons.settings, 'label': 'Account Backend & Rules', 'color': 0xFF06B6D4, 'action': () => AccountBackendSettingsSheet.show(context)},
           {'icon': LucideIcons.star, 'label': 'Upgrade to Premium', 'color': 0xFFF59E0B, 'highlight': true, 'action': () {}},
         ],
       },
@@ -285,7 +346,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         'items': [
           {'icon': LucideIcons.helpCircle, 'label': 'Help Center', 'color': 0xFF64748B, 'action': () => _showHelpCenter(context)},
           {'icon': LucideIcons.logOut, 'label': 'Sign Out', 'color': 0xFFEF4444, 'danger': true, 'action': () async {
-            await ref.read(userProvider.notifier).clearUser();
+            await ref.read(userProvider.notifier).signOut();
             widget.onSignOut?.call();
           }},
         ],

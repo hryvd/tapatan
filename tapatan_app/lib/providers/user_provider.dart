@@ -1,7 +1,8 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../services/account_backend_service.dart';
 import '../utils/lucide_icons.dart';
 
 // ── Models ──────────────────────────────────────────────────────────────────
@@ -38,7 +39,8 @@ class TransactionData {
     final amount = (json['amount'] as num?)?.toDouble() ?? 0.0;
     final isPositive = amount > 0;
     return TransactionData(
-      id: (json['id'] ?? 'tx-${DateTime.now().millisecondsSinceEpoch}').toString(),
+      id: (json['id'] ?? 'tx-${DateTime.now().millisecondsSinceEpoch}')
+          .toString(),
       name: (json['name'] ?? 'Transaction').toString(),
       amount: amount,
       icon: isPositive
@@ -115,13 +117,18 @@ class CardData {
             ?.map((v) => Color((v as num).toInt()))
             .toList() ??
         const [Color(0xFF0369A1), Color(0xFF0891B2)];
+    final rawHolder = (json['holderName'] ?? '').toString().trim();
+    final safeHolder =
+        (rawHolder.isEmpty || rawHolder.toLowerCase() == 'richard')
+            ? 'TAPAT MEMBER'
+            : rawHolder;
     return CardData(
       id: (json['id'] ?? 'card-1').toString(),
-      provider: (json['provider'] ?? 'Tapat Card').toString(),
+      provider: (json['provider'] ?? 'Tapat JCOP4').toString(),
       cardNumber: (json['cardNumber'] ?? '4532 •••• •••• 8821').toString(),
-      holderName: (json['holderName'] ?? 'CARDHOLDER').toString(),
+      holderName: safeHolder,
       expiry: (json['expiry'] ?? '12/28').toString(),
-      cvv: (json['cvv'] ?? '123').toString(),
+      cvv: (json['cvv'] ?? '882').toString(),
       type: (json['type'] ?? 'visa').toString(),
       colors: rawColors.length >= 2
           ? rawColors
@@ -177,7 +184,6 @@ class UserState {
   final int pinRetriesLeft;
 
   /// Current card lifecycle state as last known.
-  /// e.g. 'op_ready', 'secured', 'locked', 'unknown', 'ENROLLED'
   final String cardLifecycleState;
 
   /// Hardware UID of the physical JCOP4 J3R150 card, read via ISO 14443 layer.
@@ -206,11 +212,16 @@ class UserState {
 
   CardData? get activeCard {
     if (virtualCards.isEmpty) return null;
+    CardData chosen;
     try {
-      return virtualCards.firstWhere((c) => c.id == activeCardId);
+      chosen = virtualCards.firstWhere((c) => c.id == activeCardId);
     } catch (_) {
-      return virtualCards.first;
+      chosen = virtualCards.first;
     }
+    if (name.trim().isNotEmpty) {
+      return chosen.copyWith(holderName: name.trim().toUpperCase());
+    }
+    return chosen;
   }
 
   double get totalIncome => transactions
@@ -267,103 +278,50 @@ class UserNotifier extends StateNotifier<UserState> {
   bool _hasManualMutation = false;
 
   UserNotifier() : super(UserState()) {
-    _loadFromPrefs();
+    _loadActiveSession();
   }
 
-  Future<void> reloadFromPrefs() => _loadFromPrefs(force: true);
+  Future<void> reloadFromPrefs() => _loadActiveSession(force: true);
 
-  Future<void> _loadFromPrefs({bool force = false}) async {
-    final prefs = await SharedPreferences.getInstance();
+  Future<void> _loadActiveSession({bool force = false}) async {
     if (_hasManualMutation && !force) return;
-
-    final isRegistered = prefs.getBool('snfc_registered') ?? false;
-    if (!isRegistered) {
-      if (!_hasManualMutation) {
+    final activeAccount = await AccountBackendService.getActiveSessionAccount();
+    if (activeAccount == null) {
+      if (!_hasManualMutation || force) {
         state = UserState();
       }
       return;
     }
-
-    final name = prefs.getString('snfc_name') ?? '';
-    final email = prefs.getString('snfc_email') ?? '';
-    final balance = prefs.getDouble('snfc_balance') ?? 0.0;
-    final cardId = prefs.getString('snfc_card_id') ?? '';
-    final activeCardId = prefs.getString('snfc_active_card_id') ?? '';
-    final jcopUid = prefs.getString('snfc_jcop_uid') ?? '';
-    final lifecycle = prefs.getString('snfc_lifecycle_state') ?? 'ENROLLED';
-    final retries = prefs.getInt('snfc_pin_retries') ?? 5;
-
-    List<TransactionData> loadedTransactions = [];
-    final txJsonStr = prefs.getString('snfc_transactions_json');
-    if (txJsonStr != null && txJsonStr.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(txJsonStr) as List;
-        loadedTransactions = decoded
-            .map((item) =>
-                TransactionData.fromJson(Map<String, dynamic>.from(item as Map)))
-            .toList();
-      } catch (_) {}
-    }
-
-    List<CardData> loadedCards = [];
-    final cardsJsonStr = prefs.getString('snfc_cards_json');
-    if (cardsJsonStr != null && cardsJsonStr.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(cardsJsonStr) as List;
-        loadedCards = decoded
-            .map((item) =>
-                CardData.fromJson(Map<String, dynamic>.from(item as Map)))
-            .map((c) => c.copyWith(
-                  holderName: name.isNotEmpty ? name.toUpperCase() : c.holderName,
-                  balance: balance,
-                ))
-            .toList();
-      } catch (_) {}
-    }
-
-    if (loadedCards.isEmpty && name.isNotEmpty) {
-      final defaultCard = _buildDefaultCardForUser(
-        name: name,
-        cardId: cardId,
-        balance: balance,
-      );
-      loadedCards = [defaultCard];
-    }
-
-    state = state.copyWith(
-      name: name,
-      email: email,
-      balance: balance,
-      cardId: cardId,
-      virtualCards: loadedCards,
-      activeCardId: activeCardId.isNotEmpty
-          ? activeCardId
-          : (loadedCards.isNotEmpty ? loadedCards.first.id : ''),
-      transactions: loadedTransactions,
-      jcopCardUid: jcopUid,
-      cardLifecycleState: lifecycle,
-      pinRetriesLeft: retries,
-    );
+    await applyAuthenticatedAccount(activeAccount, armed: state.cardArmed);
   }
 
-  CardData _buildDefaultCardForUser({
-    required String name,
-    required String cardId,
-    required double balance,
-  }) {
-    final suffix = cardId.length >= 4
-        ? cardId.substring(cardId.length - 4)
-        : '8821';
-    return CardData(
-      id: 'card-tapat-primary',
-      provider: 'Tapat JCOP4',
-      cardNumber: '4532 •••• •••• $suffix',
-      holderName: name.isNotEmpty ? name.toUpperCase() : 'CARDHOLDER',
-      expiry: '12/28',
-      cvv: '882',
-      type: 'visa',
-      colors: const [Color(0xFF0369A1), Color(0xFF0891B2)],
-      balance: balance,
+  /// Hydrates [UserState] from an authenticated [AccountRecord] in the
+  /// persistent account database, guaranteeing real cardholder names and
+  /// complete transaction history.
+  Future<void> applyAuthenticatedAccount(
+    AccountRecord account, {
+    bool armed = false,
+  }) async {
+    _hasManualMutation = true;
+    final cfg = await AccountBackendService.getConfig();
+    final syncedCards =
+        AccountBackendService.sanitizeAndSyncCards(account, cfg);
+
+    state = UserState(
+      name: account.name,
+      email: account.email,
+      balance: account.balance,
+      transactions: account.transactions,
+      virtualCards: syncedCards,
+      activeCardId: account.activeCardId.isNotEmpty
+          ? account.activeCardId
+          : (syncedCards.isNotEmpty ? syncedCards.first.id : ''),
+      cardArmed: armed,
+      sessionTxnDone: false,
+      cardId: account.cardId,
+      pinRetriesLeft: account.pinRetriesLeft,
+      cardLifecycleState: account.cardLifecycleState,
+      jcopCardUid: account.jcopCardUid,
     );
   }
 
@@ -372,91 +330,43 @@ class UserNotifier extends StateNotifier<UserState> {
     double newBalance, {
     String? holderName,
   }) {
+    final cleanUpper = (holderName ?? state.name).trim().toUpperCase();
+    if (cards.isEmpty && cleanUpper.isNotEmpty) {
+      return [
+        AccountBackendService.buildDefaultCardForAccount(
+          name: holderName ?? state.name,
+          cardId: state.cardId,
+          balance: newBalance,
+        ),
+      ];
+    }
     if (cards.isEmpty) return cards;
+
     final activeId = state.activeCardId.isNotEmpty
         ? state.activeCardId
         : cards.first.id;
     return cards.map((c) {
-      final updatedName =
-          (holderName != null && holderName.isNotEmpty)
-              ? holderName.toUpperCase()
-              : c.holderName;
+      final resolvedHolder = cleanUpper.isNotEmpty ? cleanUpper : c.holderName;
       if (c.id == activeId || cards.length == 1) {
-        return c.copyWith(balance: newBalance, holderName: updatedName);
+        return c.copyWith(balance: newBalance, holderName: resolvedHolder);
       }
-      return c.copyWith(holderName: updatedName);
+      return c.copyWith(holderName: resolvedHolder);
     }).toList();
   }
 
   Future<void> _persistState() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('snfc_name', state.name);
-    await prefs.setString('snfc_email', state.email);
-    await prefs.setDouble('snfc_balance', state.balance);
-    if (state.cardId.isNotEmpty) {
-      await prefs.setString('snfc_card_id', state.cardId);
+    await AccountBackendService.syncAccountFromUserState(state);
+    if (state.email.isNotEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('snfc_name', state.name);
+      await prefs.setString('snfc_email', state.email);
+      if (state.cardId.isNotEmpty) {
+        await prefs.setString('snfc_card_id', state.cardId);
+      }
+      if (state.jcopCardUid.isNotEmpty) {
+        await prefs.setString('snfc_jcop_uid', state.jcopCardUid);
+      }
     }
-    await prefs.setString('snfc_active_card_id', state.activeCardId);
-    await prefs.setString(
-      'snfc_transactions_json',
-      jsonEncode(state.transactions.map((t) => t.toJson()).toList()),
-    );
-    await prefs.setString(
-      'snfc_cards_json',
-      jsonEncode(state.virtualCards.map((c) => c.toJson()).toList()),
-    );
-    if (state.jcopCardUid.isNotEmpty) {
-      await prefs.setString('snfc_jcop_uid', state.jcopCardUid);
-    }
-    await prefs.setString('snfc_lifecycle_state', state.cardLifecycleState);
-    await prefs.setInt('snfc_pin_retries', state.pinRetriesLeft);
-  }
-
-  /// Sets user data after successful signup or account switch.
-  /// [cardId] is the unique ID written to the NFC smart card during registration.
-  Future<void> setUserData(
-    String name,
-    String email, {
-    String cardId = '',
-    double initialBalance = 0.0,
-  }) async {
-    _hasManualMutation = true;
-    final cleanName = name.trim();
-    final cleanEmail = email.trim();
-    final primaryCard = _buildDefaultCardForUser(
-      name: cleanName,
-      cardId: cardId,
-      balance: initialBalance,
-    );
-    final initialTx = initialBalance > 0
-        ? [
-            TransactionData(
-              id: 'tx-${DateTime.now().millisecondsSinceEpoch}',
-              name: 'Initial Wallet Balance',
-              amount: initialBalance,
-              icon: LucideIcons.arrowDownLeft,
-              color: const Color(0xFF10B981),
-              time: 'Just now',
-              type: 'receive',
-            ),
-          ]
-        : <TransactionData>[];
-
-    state = state.copyWith(
-      name: cleanName,
-      email: cleanEmail,
-      balance: initialBalance,
-      cardId: cardId,
-      virtualCards: [primaryCard],
-      activeCardId: primaryCard.id,
-      transactions: initialTx,
-      cardArmed: false,
-      sessionTxnDone: false,
-    );
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('snfc_registered', true);
-    await _persistState();
   }
 
   /// Verifies if the given cardId matches the registered card.
@@ -547,14 +457,21 @@ class UserNotifier extends StateNotifier<UserState> {
 
   void addVirtualCard(CardData card) {
     _hasManualMutation = true;
+    final cleanInputHolder = card.holderName.trim();
+    final effectiveHolder = (cleanInputHolder.isNotEmpty &&
+            cleanInputHolder.toLowerCase() != 'richard' &&
+            cleanInputHolder.toLowerCase() != 'cardholder')
+        ? cleanInputHolder.toUpperCase()
+        : (state.name.isNotEmpty ? state.name.toUpperCase() : 'TAPAT MEMBER');
     final syncedCard = card.copyWith(
-      holderName: state.name.isNotEmpty ? state.name.toUpperCase() : card.holderName,
+      holderName: effectiveHolder,
       balance: state.balance,
     );
     final updatedCards = [...state.virtualCards, syncedCard];
     state = state.copyWith(
       virtualCards: updatedCards,
-      activeCardId: state.activeCardId.isNotEmpty ? state.activeCardId : syncedCard.id,
+      activeCardId:
+          state.activeCardId.isNotEmpty ? state.activeCardId : syncedCard.id,
     );
     _persistState();
   }
@@ -593,26 +510,18 @@ class UserNotifier extends StateNotifier<UserState> {
     state = state.copyWith(cardArmed: false, sessionTxnDone: true);
   }
 
-  Future<void> clearUser() async {
+  /// Signs out of the active session while keeping 100% of the account's
+  /// profile, balance, cards, and transaction history stored in the database.
+  Future<void> signOut() async {
     _hasManualMutation = true;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('snfc_registered');
-    await prefs.remove('snfc_name');
-    await prefs.remove('snfc_email');
-    await prefs.remove('snfc_balance');
-    await prefs.remove('snfc_card_id');
-    await prefs.remove('snfc_active_card_id');
-    await prefs.remove('snfc_transactions_json');
-    await prefs.remove('snfc_cards_json');
-    await prefs.remove('snfc_jcop_uid');
-    await prefs.remove('snfc_lifecycle_state');
-    await prefs.remove('snfc_pin_retries');
-    await prefs.remove('snfc_identity_json');
-    await prefs.remove('snfc_last_card_json');
-    await prefs.remove('snfc_pin');
-    await prefs.remove('jcop_used_token_ids');
+    await AccountBackendService.syncAccountFromUserState(state);
+    await AccountBackendService.signOut();
     state = UserState();
   }
+
+  /// Preserved for caller compatibility — signs out safely without deleting
+  /// stored database records.
+  Future<void> clearUser() => signOut();
 
   /// Updates the in-memory JCOP hardware state after a successful NFC tap.
   void updateJcopCardInfo({

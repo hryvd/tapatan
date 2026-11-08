@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+import '../providers/user_provider.dart';
+import '../services/account_backend_service.dart';
+import '../services/nfc_service.dart';
+import '../utils/lucide_icons.dart';
+import '../widgets/account_backend_settings_sheet.dart';
 import '../widgets/glass_button.dart';
 import '../widgets/glass_container.dart';
-import '../utils/lucide_icons.dart';
-import '../services/nfc_service.dart';
-import '../providers/user_provider.dart';
 
 enum AuthView { welcome, login, signup, registerCard }
 
@@ -30,6 +32,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
   int _retrySecondsLeft = 0;
   Timer? _retryTimer;
 
+  List<AccountSummary> _savedAccounts = const [];
+  AccountManagementConfig _accountConfig = const AccountManagementConfig();
+
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
@@ -49,7 +54,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     _pulseAnim = Tween<double>(begin: 1.0, end: 1.15).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
-    _checkRegistration();
+    _initializeAuthState();
   }
 
   @override
@@ -65,18 +70,37 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     super.dispose();
   }
 
-  Future<void> _checkRegistration() async {
-    await ref.read(userProvider.notifier).reloadFromPrefs();
-    final prefs = await SharedPreferences.getInstance();
-    final isRegistered = prefs.getBool('snfc_registered') ?? false;
-    if (isRegistered) {
-      final email = prefs.getString('snfc_email') ?? '';
-      if (email.isNotEmpty) {
-        _emailController.text = email;
-      }
+  Future<void> _refreshAccountsAndConfig() async {
+    final cfg = await AccountBackendService.getConfig();
+    final saved = await AccountBackendService.listSavedAccounts();
+    if (!mounted) return;
+    setState(() {
+      _accountConfig = cfg;
+      _savedAccounts = saved;
+    });
+  }
+
+  Future<void> _initializeAuthState() async {
+    await AccountBackendService.initialize();
+    final active = await AccountBackendService.getActiveSessionAccount();
+    if (active != null) {
+      await ref
+          .read(userProvider.notifier)
+          .applyAuthenticatedAccount(active, armed: false);
       if (mounted) {
-        _switchView(AuthView.login);
+        _navigateToMain();
       }
+      return;
+    }
+
+    await _refreshAccountsAndConfig();
+    final lastEmail = await AccountBackendService.getLastSignedInEmail();
+    if (!mounted) return;
+    if (lastEmail.isNotEmpty) {
+      _emailController.text = lastEmail;
+    }
+    if (_savedAccounts.isNotEmpty) {
+      _switchView(AuthView.login);
     }
   }
 
@@ -97,8 +121,19 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
             !_nfcTapping &&
             !_nfcCompleted &&
             !_isNavigating) {
-          _handleNFCTapLogin(simulate: false);
+          _handleNFCTapLogin();
         }
+      });
+    }
+  }
+
+  void _pauseBackgroundNfcForManualTyping() {
+    if (_nfcTapping || _retrySecondsLeft > 0) {
+      _retryTimer?.cancel();
+      NfcService.stopSession();
+      setState(() {
+        _nfcTapping = false;
+        _retrySecondsLeft = 0;
       });
     }
   }
@@ -136,102 +171,66 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     );
   }
 
-  // ── Demo Quick Sign-In ─────────────────────────────────────────────────────
-
-  Future<void> _handleQuickDemoLogin() async {
-    if (_isNavigating) return;
-    _retryTimer?.cancel();
-    await NfcService.stopSession();
-    setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 400));
-
-    await ref.read(userProvider.notifier).reloadFromPrefs();
-    final prefs = await SharedPreferences.getInstance();
-    final isRegistered = prefs.getBool('snfc_registered') ?? false;
-    final savedName = prefs.getString('snfc_name') ?? '';
-    final savedEmail = prefs.getString('snfc_email') ?? '';
-
-    if (isRegistered && savedName.isNotEmpty) {
-      ref.read(userProvider.notifier).armCard();
-      ref.read(userProvider.notifier).updateJcopCardInfo(
-            uid: prefs.getString('snfc_jcop_uid') ?? '04:7A:93:E2:10:88:01',
-            pinRetriesLeft: 5,
-            lifecycleState: 'ENROLLED',
-          );
-      if (mounted) setState(() => _isLoading = false);
-      _navigateToMain();
-      return;
-    }
-
-    final demoName = savedName.isNotEmpty ? savedName : 'Richard';
-    final demoEmail = savedEmail.isNotEmpty ? savedEmail : 'richard@tapat.ph';
-
-    await ref.read(userProvider.notifier).setUserData(
-          demoName,
-          demoEmail,
-          cardId: 'TAPAT_JCOP4_8821',
-          initialBalance: 5000.00,
-        );
-    ref.read(userProvider.notifier).armCard();
-    ref.read(userProvider.notifier).updateJcopCardInfo(
-          uid: '04:7A:93:E2:10:88:01',
-          pinRetriesLeft: 5,
-          lifecycleState: 'ENROLLED',
-        );
-
-    if (mounted) setState(() => _isLoading = false);
-    _navigateToMain();
+  Future<void> _openBackendSettings() async {
+    _pauseBackgroundNfcForManualTyping();
+    await AccountBackendSettingsSheet.show(context);
+    await _refreshAccountsAndConfig();
   }
 
-  // ── Standard Login ─────────────────────────────────────────────────────────
+  // ── Email + PIN Login (Restores Stored Account & Full History) ─────────────
 
   Future<void> _handleLogin() async {
-    if (_isNavigating) return;
-    if (_pinController.text.length < 4) {
-      _showSnack('Please enter your 4 to 6-digit PIN', isError: true);
+    if (_isNavigating || _isLoading) return;
+    final emailInput = _emailController.text.trim();
+    final pinInput = _pinController.text.trim();
+
+    if (emailInput.isEmpty) {
+      _showSnack('Please enter your registered email address.', isError: true);
+      return;
+    }
+    if (_accountConfig.requirePinOnEmailLogin &&
+        pinInput.length < _accountConfig.pinMinLength) {
+      _showSnack(
+        'Please enter your ${_accountConfig.pinMinLength} to ${_accountConfig.pinMaxLength}-digit PIN.',
+        isError: true,
+      );
       return;
     }
 
     _retryTimer?.cancel();
     await NfcService.stopSession();
-    setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 400));
+    setState(() {
+      _nfcTapping = false;
+      _retrySecondsLeft = 0;
+      _isLoading = true;
+    });
 
-    await ref.read(userProvider.notifier).reloadFromPrefs();
-    final prefs = await SharedPreferences.getInstance();
-    final isRegistered = prefs.getBool('snfc_registered') ?? false;
-    final savedName = prefs.getString('snfc_name') ?? '';
+    final authRes = await AccountBackendService.loginWithEmailPin(
+      email: emailInput,
+      pin: pinInput,
+    );
 
-    if (!isRegistered || savedName.isEmpty) {
-      final emailInput = _emailController.text.trim();
-      final prefix = emailInput.contains('@')
-          ? emailInput.split('@').first
-          : emailInput;
-      final displayName = prefix.isNotEmpty
-          ? prefix[0].toUpperCase() + prefix.substring(1)
-          : 'Cardholder';
-      final email = emailInput.isNotEmpty ? emailInput : 'user@tapat.ph';
-      await ref.read(userProvider.notifier).setUserData(
-            displayName,
-            email,
-            cardId: 'TAPAT_JCOP4_8821',
-            initialBalance: 5000.00,
-          );
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+
+    if (!authRes.success || authRes.account == null) {
+      _showSnack(
+        authRes.error ?? 'Unable to sign in with those credentials.',
+        isError: true,
+      );
+      return;
     }
 
-    ref.read(userProvider.notifier).updateJcopCardInfo(
-          uid: prefs.getString('snfc_jcop_uid') ?? '04:7A:93:E2:10:88:01',
-          pinRetriesLeft: 5,
-          lifecycleState: 'ENROLLED',
-        );
-
-    if (mounted) setState(() => _isLoading = false);
+    _nfcCompleted = true;
+    await ref
+        .read(userProvider.notifier)
+        .applyAuthenticatedAccount(authRes.account!, armed: false);
     _navigateToMain();
   }
 
   // ── NFC Tap Login (Single-Shot Action + 5s Auto Rescan on Failure) ─────────
 
-  Future<void> _handleNFCTapLogin({bool simulate = false}) async {
+  Future<void> _handleNFCTapLogin() async {
     // Only one NFC action is allowed; ignore any duplicate scan if already tapping or completed
     if (_nfcTapping || _nfcCompleted || _isNavigating) return;
     _retryTimer?.cancel();
@@ -241,38 +240,38 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     });
 
     try {
-      await ref.read(userProvider.notifier).reloadFromPrefs();
-      if (simulate) {
-        _nfcCompleted = true;
-        await Future.delayed(const Duration(milliseconds: 500));
-        await _handleQuickDemoLogin();
-        return;
-      }
-
       final res = await NfcService.readCardIdentity();
-      if (!mounted || _view != AuthView.login || _isNavigating || _nfcCompleted) {
+      if (!mounted ||
+          _view != AuthView.login ||
+          _isNavigating ||
+          _nfcCompleted) {
         return;
       }
 
       if (res['success'] == true) {
-        final uid = (res['uid'] as String?) ?? '04:7A:93:E2:10:88:01';
-        final cardId = (res['cardId'] as String?) ?? 'TAPAT_JCOP4_8821';
-        final owner = (res['owner'] as String?) ?? 'user@tapat.ph';
+        final uid = (res['uid'] as String?) ?? '';
+        final cardId = (res['cardId'] as String?) ?? '';
+        final owner = (res['owner'] as String?) ?? '';
         final cardName = (res['name'] as String?) ?? '';
 
-        final user = ref.read(userProvider);
-        if (user.name.isNotEmpty &&
-            user.cardId.isNotEmpty &&
-            cardId != user.cardId &&
-            cardId != 'TAPAT_JCOP4_8821') {
+        final authRes = await AccountBackendService.loginWithCard(
+          cardId: cardId,
+          uid: uid,
+          ownerEmail: owner,
+          cardName: cardName,
+        );
+
+        if (!mounted || _view != AuthView.login || _isNavigating) return;
+
+        if (!authRes.success || authRes.account == null) {
           setState(() => _nfcTapping = false);
           _showSnack(
-            'Card Mismatch: Card ($cardId) is not bound to ${user.name}\'s account (${user.cardId}). Re-scanning in 5s...',
+            '${authRes.error ?? 'Card is not linked to an account.'} Re-scanning in 5s...',
             isError: true,
           );
           _start5SecRetryTimer(() {
             if (mounted && _view == AuthView.login && !_nfcCompleted) {
-              _handleNFCTapLogin(simulate: false);
+              _handleNFCTapLogin();
             }
           });
           return;
@@ -282,26 +281,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
         _nfcCompleted = true;
         setState(() => _nfcTapping = false);
 
-        if (user.name.isEmpty) {
-          final prefix = owner.contains('@') ? owner.split('@').first : owner;
-          final resolvedName = cardName.isNotEmpty
-              ? cardName
-              : (prefix.isNotEmpty && prefix.toLowerCase() != 'harry'
-                  ? prefix[0].toUpperCase() + prefix.substring(1)
-                  : 'Cardholder');
-          await ref.read(userProvider.notifier).setUserData(
-                resolvedName,
-                owner,
-                cardId: cardId,
-                initialBalance: 5000.00,
-              );
-        }
-        ref.read(userProvider.notifier).armCard();
-        ref.read(userProvider.notifier).updateJcopCardInfo(
-              uid: uid,
-              pinRetriesLeft: 5,
-              lifecycleState: 'ENROLLED',
-            );
+        await ref
+            .read(userProvider.notifier)
+            .applyAuthenticatedAccount(authRes.account!, armed: true);
         _navigateToMain();
       } else {
         setState(() => _nfcTapping = false);
@@ -311,7 +293,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
         );
         _start5SecRetryTimer(() {
           if (mounted && _view == AuthView.login && !_nfcCompleted) {
-            _handleNFCTapLogin(simulate: false);
+            _handleNFCTapLogin();
           }
         });
       }
@@ -321,7 +303,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
       _showSnack('NFC error: $e. Re-scanning in 5s...', isError: true);
       _start5SecRetryTimer(() {
         if (mounted && _view == AuthView.login && !_nfcCompleted) {
-          _handleNFCTapLogin(simulate: false);
+          _handleNFCTapLogin();
         }
       });
     }
@@ -329,26 +311,37 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
 
   // ── Signup Steps ───────────────────────────────────────────────────────────
 
-  void _handleSignupContinue() {
+  Future<void> _handleSignupContinue() async {
     final name = _nameController.text.trim();
-    final email = _emailController.text.trim();
+    final email = AccountBackendService.normalizeEmail(_emailController.text);
     final pin = _pinController.text.trim();
     final confirm = _confirmPinController.text.trim();
 
     if (name.length < 2) {
-      _showSnack('Please enter your full name', isError: true);
+      _showSnack('Please enter your full name.', isError: true);
       return;
     }
-    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email)) {
-      _showSnack('Please enter a valid email address', isError: true);
+    if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email)) {
+      _showSnack('Please enter a valid email address.', isError: true);
       return;
     }
-    if (pin.length < 4) {
-      _showSnack('PIN must be at least 4-6 digits', isError: true);
+    if (_savedAccounts.any((a) => a.email == email)) {
+      _showSnack(
+        'An account with "$email" already exists. Please Sign In instead.',
+        isError: true,
+      );
+      return;
+    }
+    if (pin.length < _accountConfig.pinMinLength ||
+        pin.length > _accountConfig.pinMaxLength) {
+      _showSnack(
+        'PIN must be ${_accountConfig.pinMinLength} to ${_accountConfig.pinMaxLength} digits.',
+        isError: true,
+      );
       return;
     }
     if (pin != confirm) {
-      _showSnack('PINs do not match', isError: true);
+      _showSnack('PINs do not match.', isError: true);
       return;
     }
 
@@ -379,41 +372,48 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     });
 
     try {
-      final email = _emailController.text.trim().isNotEmpty
-          ? _emailController.text.trim()
-          : 'user@tapat.ph';
-      final name = _nameController.text.trim().isNotEmpty
-          ? _nameController.text.trim()
-          : 'Cardholder';
+      final name = _nameController.text.trim();
+      final email = AccountBackendService.normalizeEmail(_emailController.text);
+      final phone = _phoneController.text.trim();
+      final pin = _pinController.text.trim();
+      final generatedCardId = NfcService.generateCardId();
 
       if (simulate) {
-        _nfcCompleted = true;
-        await Future.delayed(const Duration(milliseconds: 600));
-        const cardId = 'TAPAT_JCOP4_8821';
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool('snfc_registered', true);
-        await prefs.setString('snfc_pin', _pinController.text.trim());
-        await ref.read(userProvider.notifier).setUserData(
-              name,
-              email,
-              cardId: cardId,
-              initialBalance: 5000.00,
-            );
-        ref.read(userProvider.notifier).armCard();
-        ref.read(userProvider.notifier).updateJcopCardInfo(
-              uid: '04:7A:93:E2:10:88:01',
-              pinRetriesLeft: 5,
-              lifecycleState: 'ENROLLED',
-            );
+        await NfcService.stopSession();
+        final regRes = await AccountBackendService.registerAccount(
+          name: name,
+          email: email,
+          phone: phone,
+          pin: pin,
+          cardId: generatedCardId,
+          jcopCardUid: '',
+        );
 
-        if (mounted) setState(() => _cardStep = 'success');
+        if (!mounted) return;
+        if (!regRes.success || regRes.account == null) {
+          setState(() => _cardStep = 'error');
+          _showSnack(
+            regRes.error ?? 'Could not create account.',
+            isError: true,
+          );
+          return;
+        }
+
+        _nfcCompleted = true;
+        await ref
+            .read(userProvider.notifier)
+            .applyAuthenticatedAccount(regRes.account!, armed: false);
+        setState(() => _cardStep = 'success');
         await Future.delayed(const Duration(milliseconds: 350));
         _navigateToMain();
         return;
       }
 
-      final cardId = NfcService.generateCardId();
-      final res = await NfcService.writeCardIdentity(cardId, email, name: name);
+      final res = await NfcService.writeCardIdentity(
+        generatedCardId,
+        email,
+        name: name,
+      );
 
       if (!mounted ||
           _view != AuthView.registerCard ||
@@ -423,25 +423,31 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
       }
 
       if (res['success'] == true) {
-        _nfcCompleted = true;
-        final uid = (res['uid'] as String?) ?? '04:7A:93:E2:10:88:01';
-        setState(() => _cardStep = 'success');
+        final uid = (res['uid'] as String?) ?? '';
+        final regRes = await AccountBackendService.registerAccount(
+          name: name,
+          email: email,
+          phone: phone,
+          pin: pin,
+          cardId: generatedCardId,
+          jcopCardUid: uid,
+        );
 
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool('snfc_registered', true);
-        await prefs.setString('snfc_pin', _pinController.text.trim());
-        await ref.read(userProvider.notifier).setUserData(
-              name,
-              email,
-              cardId: cardId,
-              initialBalance: 5000.00,
-            );
-        ref.read(userProvider.notifier).armCard();
-        ref.read(userProvider.notifier).updateJcopCardInfo(
-              uid: uid,
-              pinRetriesLeft: 5,
-              lifecycleState: 'ENROLLED',
-            );
+        if (!mounted) return;
+        if (!regRes.success || regRes.account == null) {
+          setState(() => _cardStep = 'error');
+          _showSnack(
+            regRes.error ?? 'Account registration failed.',
+            isError: true,
+          );
+          return;
+        }
+
+        _nfcCompleted = true;
+        setState(() => _cardStep = 'success');
+        await ref
+            .read(userProvider.notifier)
+            .applyAuthenticatedAccount(regRes.account!, armed: true);
         await Future.delayed(const Duration(milliseconds: 350));
         _navigateToMain();
       } else {
@@ -530,6 +536,35 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     );
   }
 
+  Widget _buildSettingsIconButton() {
+    return GestureDetector(
+      onTap: _openBackendSettings,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.07),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFF0891B2).withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(LucideIcons.settings, color: Color(0xFF38BDF8), size: 15),
+            const SizedBox(width: 6),
+            Text(
+              'Account Rules',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.8),
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildTextField({
     required TextEditingController controller,
     required IconData icon,
@@ -538,6 +573,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     bool isNumber = false,
     int? maxLength,
     Widget? suffix,
+    VoidCallback? onChangedExtra,
   }) {
     return Container(
       decoration: BoxDecoration(
@@ -570,7 +606,10 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                 border: InputBorder.none,
                 counterText: '',
               ),
-              onChanged: (_) => setState(() {}),
+              onChanged: (_) {
+                onChangedExtra?.call();
+                setState(() {});
+              },
             ),
           ),
           if (suffix != null) suffix,
@@ -586,6 +625,10 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
       padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
       child: Column(
         children: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: _buildSettingsIconButton(),
+          ),
           const Spacer(flex: 1),
           // Shield Logo
           Container(
@@ -608,7 +651,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                 ),
               ],
             ),
-            child: const Icon(LucideIcons.shield, color: Colors.white, size: 42),
+            child:
+                const Icon(LucideIcons.shield, color: Colors.white, size: 42),
           ),
           const SizedBox(height: 20),
           const Text(
@@ -686,8 +730,11 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
           // Sign In button
           GlassButton(
             onPressed: () => _switchView(AuthView.login),
-            child: const Text('Sign In',
-                style: TextStyle(
+            child: Text(
+                _savedAccounts.isNotEmpty
+                    ? 'Sign In (${_savedAccounts.length} Saved Account${_savedAccounts.length > 1 ? 's' : ''})'
+                    : 'Sign In',
+                style: const TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w800,
                     color: Colors.white)),
@@ -697,38 +744,21 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
           // Create Account button
           GlassButton(
             gradientColors: const [Color(0xFF0C1E35), Color(0xFF0A1628)],
-            onPressed: () => _switchView(AuthView.signup),
+            onPressed: () {
+              _nameController.clear();
+              _emailController.clear();
+              _phoneController.clear();
+              _pinController.clear();
+              _confirmPinController.clear();
+              _switchView(AuthView.signup);
+            },
             child: const Text('Create Account',
                 style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
                     color: Colors.white)),
           ),
-          const SizedBox(height: 12),
-
-          // Quick Demo Sign-in for presentation & thesis panel
-          GestureDetector(
-            onTap: _handleQuickDemoLogin,
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(LucideIcons.zap,
-                      size: 14, color: Color(0xFFF59E0B)),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Quick Demo Sign-In (Pre-Loaded Account)',
-                    style: TextStyle(
-                        color: const Color(0xFFF59E0B).withValues(alpha: 0.9),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 14),
         ],
       ),
     );
@@ -736,56 +766,165 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
 
   // ── Login View ─────────────────────────────────────────────────────────────
 
+  Widget _buildSavedAccountChips() {
+    if (_savedAccounts.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'SAVED ACCOUNTS ON DEVICE',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.45),
+            fontSize: 10.5,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.1,
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 54,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: _savedAccounts.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (context, index) {
+              final acc = _savedAccounts[index];
+              final isSelected = AccountBackendService.normalizeEmail(
+                      _emailController.text) ==
+                  acc.email;
+              final initial =
+                  acc.name.isNotEmpty ? acc.name[0].toUpperCase() : 'U';
+              return GestureDetector(
+                onTap: () {
+                  _pauseBackgroundNfcForManualTyping();
+                  setState(() {
+                    _emailController.text = acc.email;
+                    _pinController.clear();
+                  });
+                },
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? const Color(0xFF0891B2).withValues(alpha: 0.22)
+                        : Colors.white.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: isSelected
+                          ? const Color(0xFF38BDF8)
+                          : Colors.white.withValues(alpha: 0.12),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircleAvatar(
+                        radius: 14,
+                        backgroundColor: const Color(0xFF0369A1),
+                        child: Text(
+                          initial,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            acc.name,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          Text(
+                            '${acc.email} · ${acc.transactionCount} tx',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.5),
+                              fontSize: 10.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 18),
+      ],
+    );
+  }
+
   Widget _buildLoginView() {
     return ListView(
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
       children: [
-        const SizedBox(height: 30),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: GestureDetector(
-            onTap: () => _switchView(AuthView.welcome),
-            child: Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(12),
+        const SizedBox(height: 12),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            GestureDetector(
+              onTap: () => _switchView(AuthView.welcome),
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(LucideIcons.arrowLeft,
+                    color: Colors.white, size: 18),
               ),
-              child: const Icon(LucideIcons.arrowLeft,
-                  color: Colors.white, size: 18),
             ),
-          ),
+            _buildSettingsIconButton(),
+          ],
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 22),
         const Text('Welcome Back',
             style: TextStyle(
                 fontSize: 26,
                 fontWeight: FontWeight.w900,
                 color: Colors.white)),
         const SizedBox(height: 4),
-        Text('Tap your Tapat Card or enter your 6-digit PIN to sign in',
+        Text(
+            'Sign in with your registered email & PIN or tap your bound Tapat Card',
             style: TextStyle(
                 fontSize: 13, color: Colors.white.withValues(alpha: 0.5))),
-        const SizedBox(height: 28),
+        const SizedBox(height: 22),
+
+        // Quick-select saved accounts (persisted across sign-outs)
+        _buildSavedAccountChips(),
 
         // Email field
         _buildTextField(
           controller: _emailController,
           icon: LucideIcons.mail,
-          hint: 'Email address (e.g. richard@tapat.ph)',
+          hint: 'Registered email address',
+          onChangedExtra: _pauseBackgroundNfcForManualTyping,
         ),
         const SizedBox(height: 14),
 
-        // 6-digit PIN field
+        // PIN field
         _buildTextField(
           controller: _pinController,
           icon: LucideIcons.lock,
-          hint: '6-Digit Card PIN',
+          hint:
+              '${_accountConfig.pinMinLength}-${_accountConfig.pinMaxLength} Digit Account PIN',
           isPassword: true,
           isNumber: true,
-          maxLength: 6,
+          maxLength: _accountConfig.pinMaxLength,
+          onChangedExtra: _pauseBackgroundNfcForManualTyping,
           suffix: GestureDetector(
             onTap: () => setState(() => _showPass = !_showPass),
             child: Icon(
@@ -795,49 +934,13 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
             ),
           ),
         ),
-        const SizedBox(height: 10),
-
-        // Quick demo hint
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            GestureDetector(
-              onTap: () async {
-                final prefs = await SharedPreferences.getInstance();
-                final savedEmail = prefs.getString('snfc_email') ?? '';
-                _emailController.text =
-                    savedEmail.isNotEmpty ? savedEmail : 'richard@tapat.ph';
-                _pinController.text = prefs.getString('snfc_pin') ?? '123456';
-                if (mounted) setState(() {});
-              },
-              child: Text(
-                'Autofill Registered Credentials',
-                style: TextStyle(
-                    color: const Color(0xFF38BDF8).withValues(alpha: 0.8),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600),
-              ),
-            ),
-            GestureDetector(
-              onTap: () => _showSnack(
-                  'PIN can be reset via registered email verification.'),
-              child: Text(
-                'Forgot PIN?',
-                style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.4),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 20),
 
         // Sign In Button
         GlassButton(
           onPressed: _handleLogin,
           isLoading: _isLoading,
-          child: const Text('Sign In',
+          child: const Text('Sign In to Account',
               style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w800,
@@ -868,7 +971,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
 
         // Tap Card to Login button
         GestureDetector(
-          onTap: () => _handleNFCTapLogin(simulate: false),
+          onTap: _handleNFCTapLogin,
           child: Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
@@ -899,39 +1002,36 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                   const Icon(LucideIcons.wifi,
                       color: Color(0xFF38BDF8), size: 18),
                 const SizedBox(width: 10),
-                Text(
-                  _nfcTapping
-                      ? 'Ready: Tap Tapat Card Now...'
-                      : (_retrySecondsLeft > 0
-                          ? 'Failed — Re-scanning in ${_retrySecondsLeft}s (Tap to retry now)'
-                          : 'Tap Tapat Card to Sign In'),
-                  style: const TextStyle(
-                      color: Color(0xFF38BDF8),
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.bold),
+                Flexible(
+                  child: Text(
+                    _nfcTapping
+                        ? 'Ready: Tap Bound Tapat Card Now...'
+                        : (_retrySecondsLeft > 0
+                            ? 'Failed — Re-scanning in ${_retrySecondsLeft}s (Tap to retry now)'
+                            : 'Tap Bound Tapat Card to Sign In'),
+                    style: const TextStyle(
+                        color: Color(0xFF38BDF8),
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ],
             ),
           ),
         ),
-        const SizedBox(height: 10),
 
-        // Simulate NFC tap for testing without physical card
-        Center(
-          child: TextButton(
-            onPressed: () => _handleNFCTapLogin(simulate: true),
-            child: Text(
-              'Simulate Card Tap (Demo Mode)',
-              style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.45), fontSize: 12),
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 16),
+        const SizedBox(height: 22),
         Center(
           child: GestureDetector(
-            onTap: () => _switchView(AuthView.signup),
+            onTap: () {
+              _nameController.clear();
+              _emailController.clear();
+              _phoneController.clear();
+              _pinController.clear();
+              _confirmPinController.clear();
+              _switchView(AuthView.signup);
+            },
             child: RichText(
               text: TextSpan(
                 text: 'Don\'t have an account? ',
@@ -959,31 +1059,35 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
       children: [
-        const SizedBox(height: 30),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: GestureDetector(
-            onTap: () => _switchView(AuthView.welcome),
-            child: Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(12),
+        const SizedBox(height: 12),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            GestureDetector(
+              onTap: () => _switchView(AuthView.welcome),
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(LucideIcons.arrowLeft,
+                    color: Colors.white, size: 18),
               ),
-              child: const Icon(LucideIcons.arrowLeft,
-                  color: Colors.white, size: 18),
             ),
-          ),
+            _buildSettingsIconButton(),
+          ],
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 22),
         const Text('Create Account',
             style: TextStyle(
                 fontSize: 26,
                 fontWeight: FontWeight.w900,
                 color: Colors.white)),
         const SizedBox(height: 4),
-        Text('Step 1 of 2: Profile & 6-Digit PIN',
+        Text(
+            'Step 1 of 2: Account Profile & ${_accountConfig.pinMaxLength}-Digit PIN',
             style: TextStyle(
                 fontSize: 13, color: Colors.white.withValues(alpha: 0.5))),
         const SizedBox(height: 24),
@@ -991,14 +1095,14 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
         _buildTextField(
           controller: _nameController,
           icon: LucideIcons.user,
-          hint: 'Full Name (e.g. Richard)',
+          hint: 'Full Name',
         ),
         const SizedBox(height: 12),
 
         _buildTextField(
           controller: _emailController,
           icon: LucideIcons.mail,
-          hint: 'Email address',
+          hint: 'Email address (e.g. name@email.com)',
         ),
         const SizedBox(height: 12),
 
@@ -1013,20 +1117,21 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
         _buildTextField(
           controller: _pinController,
           icon: LucideIcons.lock,
-          hint: '6-Digit Card PIN',
+          hint:
+              '${_accountConfig.pinMinLength}-${_accountConfig.pinMaxLength} Digit Card PIN',
           isPassword: true,
           isNumber: true,
-          maxLength: 6,
+          maxLength: _accountConfig.pinMaxLength,
         ),
         const SizedBox(height: 12),
 
         _buildTextField(
           controller: _confirmPinController,
           icon: LucideIcons.lock,
-          hint: 'Confirm 6-Digit Card PIN',
+          hint: 'Confirm Card PIN',
           isPassword: true,
           isNumber: true,
-          maxLength: 6,
+          maxLength: _accountConfig.pinMaxLength,
         ),
         const SizedBox(height: 24),
 
@@ -1077,7 +1182,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
       padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
       child: Column(
         children: [
-          const SizedBox(height: 30),
+          const SizedBox(height: 12),
           Align(
             alignment: Alignment.centerLeft,
             child: GestureDetector(
@@ -1102,7 +1207,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                   color: Colors.white)),
           const SizedBox(height: 4),
           Text(
-            'Step 2 of 2: Hold your JCOP J3R150 smart card to the back of your phone',
+            'Step 2 of 2: Hold your JCOP J3R150 smart card to bind it to ${_nameController.text.trim()}',
             style: TextStyle(
                 fontSize: 13, color: Colors.white.withValues(alpha: 0.5)),
             textAlign: TextAlign.center,
@@ -1181,7 +1286,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
 
           Text(
             _cardStep == 'success'
-                ? 'Card Registered & Linked — Routing to Home...'
+                ? 'Account Saved & Card Bound — Routing to Home...'
                 : (_cardStep == 'scanning'
                     ? 'Writing Turing identity to card secure element...'
                     : (_retrySecondsLeft > 0
@@ -1200,7 +1305,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
           ),
           const SizedBox(height: 6),
           Text(
-            'Single-tap Turing Composition binding · Automatically routes to Home upon success.',
+            'Single-tap Turing Composition binding · Account & history persist in database.',
             style: TextStyle(
                 fontSize: 12, color: Colors.white.withValues(alpha: 0.4)),
             textAlign: TextAlign.center,
@@ -1226,7 +1331,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
           ),
           const SizedBox(height: 12),
 
-          // Simulation button for testing on PC/emulator
+          // Complete signup without physical NFC card (bind later / emulator)
           GestureDetector(
             onTap: _cardStep == 'scanning' || _cardStep == 'success'
                 ? null
@@ -1241,7 +1346,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
               ),
               child: const Center(
                 child: Text(
-                  'Simulate Card Tap (Testing Mode)',
+                  'Create Account Without Card (Bind Later)',
                   style: TextStyle(
                       color: Color(0xFF38BDF8),
                       fontSize: 13,

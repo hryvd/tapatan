@@ -52,3 +52,7 @@ node_modules/
 *.apk
 !builds/*.apk
 *.aab
+
+# Runtime backend ledger data
+tapatan_backend/data/*.json
+tapatan_backend/data/*.tmp

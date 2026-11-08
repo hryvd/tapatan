@@ -13,9 +13,9 @@ import 'jcop_apdu_service.dart';
 
 /// The permanent identity record stored in the TapatMFAApplet EEPROM.
 class CardIdentity {
-  final String cardId;     // e.g. "TAPAT_JCOP4_8821"
-  final String owner;      // user email
-  final String name;       // cardholder name (e.g. "Richard")
+  final String cardId;     // e.g. "CARD_..."
+  final String owner;      // registered user email
+  final String name;       // registered cardholder name
   final String registeredAt;
 
   CardIdentity({
@@ -509,12 +509,21 @@ class NfcService {
               'Unauthorized NFC Card: Decoded Turing frame does not contain a valid Tapat cardId.',
         };
       }
+      // Strip legacy factory-default placeholder identity ("richard@tapat.ph" / "Richard")
+      // so unprovisioned or token-overwritten JCOP4 cards never masquerade as "Richard".
+      final isFactoryPlaceholder = identity.cardId == kDefaultCardId &&
+          (identity.owner.toLowerCase() == 'richard@tapat.ph' ||
+              identity.name.toLowerCase() == 'richard');
+      final cleanOwner = isFactoryPlaceholder ? '' : identity.owner;
+      final cleanName = isFactoryPlaceholder ? '' : identity.name;
+
       return {
         'success': true,
         'cardId': identity.cardId,
-        'owner': identity.owner,
-        'name': identity.name,
+        'owner': cleanOwner,
+        'name': cleanName,
         'uid': uid,
+        'isFactoryDefault': isFactoryPlaceholder,
       };
     } catch (e) {
       return {

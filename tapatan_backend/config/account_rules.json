@@ -1,0 +1,21 @@
+{
+  "port": 4000,
+  "initialWalletBalance": 5000.0,
+  "currency": "PHP",
+  "pinMinLength": 4,
+  "pinMaxLength": 6,
+  "maxPinRetries": 5,
+  "requirePinOnEmailLogin": true,
+  "autoCreateAccountOnUnknownEmailLogin": false,
+  "strictCardToAccountBinding": true,
+  "allowCardRebindOnSignup": true,
+  "syncCardHolderNameWithAccount": true,
+  "blockedPlaceholderNames": [
+    "richard",
+    "cardholder"
+  ],
+  "blockedPlaceholderEmails": [
+    "richard@tapat.ph"
+  ]
+}
+

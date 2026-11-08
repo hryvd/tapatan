@@ -1,0 +1,14 @@
+{
+  "name": "tapatan-account-backend",
+  "version": "1.0.0",
+  "description": "Configurable Account Management & Persistent Ledger Backend for Bantay / tap@tan",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test_smoke.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+

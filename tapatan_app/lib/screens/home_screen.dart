@@ -635,11 +635,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('${card.provider} Active',
+                  Text('${card.provider} Active · ${card.holderName}',
                       style: const TextStyle(
                           color: Colors.white,
                           fontSize: 13,
-                          fontWeight: FontWeight.w700)),
+                          fontWeight: FontWeight.w700),
+                      overflow: TextOverflow.ellipsis),
                   const SizedBox(height: 2),
                   Text('${card.cardNumber} \u00b7 Ready for NFC',
                       style: TextStyle(

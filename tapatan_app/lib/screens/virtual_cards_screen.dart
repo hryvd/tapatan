@@ -68,24 +68,45 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen> {
   }
 
   Future<void> _tapToReadCard() async {
+    if (_isReadingCard) return;
+    final user = ref.read(userProvider);
     setState(() {
       _isReadingCard = true;
-      _readCardStatus = 'Reading Tapat JCOP4 Card…';
+      _readCardStatus = 'Hold your Tapat JCOP4 Card steady against the phone…';
     });
-    final result = await NfcService.readUidFromNfc();
-    if (!mounted) return;
-    final uid = (result['uid'] as String?) ?? '04:7A:93:E2:10:88:01';
-    final retries = (result['retriesLeft'] as int?) ?? 5;
-    ref.read(userProvider.notifier).updateJcopCardInfo(
-      uid: uid,
-      pinRetriesLeft: retries,
-      lifecycleState: 'ENROLLED',
+
+    final targetCardId =
+        user.cardId.isNotEmpty ? user.cardId : NfcService.generateCardId();
+
+    // Provision / sync this signed-in account's real identity onto the card
+    // and read its hardware UID in one Turing-authenticated tap!
+    final result = await NfcService.writeCardIdentity(
+      targetCardId,
+      user.email,
+      name: user.name,
     );
-    setState(() {
-      _isReadingCard = false;
-      _readCardStatus = 'JCOP4 J3R150 Verified · UID: $uid';
-      _mockSigCounter++;
-    });
+    if (!mounted) return;
+
+    if (result['success'] == true) {
+      final uid = (result['uid'] as String?) ?? '';
+      ref.read(userProvider.notifier).updateJcopCardInfo(
+            uid: uid,
+            pinRetriesLeft: 5,
+            lifecycleState: 'ENROLLED',
+          );
+      setState(() {
+        _isReadingCard = false;
+        _readCardStatus =
+            'Bound to ${user.name} · JCOP4 UID: ${uid.isNotEmpty ? uid : "Verified"}';
+        _mockSigCounter++;
+      });
+    } else {
+      setState(() {
+        _isReadingCard = false;
+        _readCardStatus =
+            (result['error'] as String?) ?? 'Failed to read Tapat JCOP4 card.';
+      });
+    }
   }
 
   String _lifecycleLabel(String state) {
@@ -331,7 +352,7 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen> {
                                   children: [
                                     Icon(LucideIcons.nfc, color: Colors.white, size: 18),
                                     SizedBox(width: 8),
-                                    Text('Tap to Read Card', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
+                                    Text('Tap to Verify & Sync Card', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
                                   ],
                                 ),
                         ),
