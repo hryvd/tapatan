@@ -69,81 +69,38 @@ class Glass extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Flat surface: solid translucent fill + hairline border. No gradient,
+    // no highlight, no glow, no per-frame backdrop blur (performance).
     late double r;
-    late double sigma;
-    Gradient? grad;
-    Color? color;
+    late Color color;
     late Color border;
-    late List<BoxShadow> shadow;
     switch (kind) {
       case GlassKind.glass:
-        r = T.rGlass; sigma = 14; grad = T.glassGradient; border = T.glassBorder;
-        shadow = T.glassShadow;
+        r = T.rGlass; color = T.surface; border = T.surfaceBorder;
         break;
       case GlassKind.strong:
-        r = T.rStrong; sigma = 15; color = T.glassStrongFill; border = T.glassStrongBorder; shadow = T.strongShadow;
+        r = T.rStrong; color = T.surfaceStrong; border = T.surfaceBorder;
         break;
       case GlassKind.tint:
-        r = T.rGlass; sigma = 12; grad = T.tintGradient; border = T.glassStrongBorder; shadow = T.tintShadow;
+        r = T.rGlass; color = T.surfaceTint; border = T.surfaceBorder;
         break;
       case GlassKind.pill:
-        r = 999; sigma = 10; color = T.glassPillFill; border = T.glassPillBorder; shadow = const [];
+        r = 999; color = T.surfacePill; border = T.surfaceBorder;
         break;
     }
     if (radius != null) r = radius!;
-    if (fill != null) { color = fill; grad = null; }
+    if (fill != null) color = fill!;
     final br = borderRadius ?? BorderRadius.circular(r);
-    final inner = Container(
+    Widget body = Container(
+      width: width,
+      height: height,
       padding: padding,
       decoration: BoxDecoration(
         borderRadius: br,
-        gradient: grad,
         color: color,
         border: Border.all(color: border, width: .5),
       ),
       child: child,
-    );
-    // top highlight (inset 0 1px 0 white/40)
-    final highlight = Positioned(
-      top: 0, left: 0, right: 0, height: 1,
-      child: IgnorePointer(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.vertical(top: Radius.circular(r.clamp(0, 30).toDouble())),
-            gradient: LinearGradient(colors: [
-              T.white(0), T.white(kind == GlassKind.strong ? .35 : .4), T.white(0),
-            ]),
-          ),
-        ),
-      ),
-    );
-    Widget body = Stack(
-      fit: StackFit.passthrough,
-      children: [
-        blur
-            ? ClipRRect(
-                borderRadius: br,
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
-                  child: inner,
-                ),
-              )
-            : ClipRRect(borderRadius: br, child: inner),
-        Positioned.fill(
-          child: IgnorePointer(
-            child: ClipRRect(
-              borderRadius: br,
-              child: Stack(children: [highlight]),
-            ),
-          ),
-        ),
-      ],
-    );
-    body = Container(
-      width: width,
-      height: height,
-      decoration: BoxDecoration(borderRadius: br, boxShadow: shadow),
-      child: body,
     );
     if (margin != null) {
       body = Padding(padding: margin!, child: body);
@@ -151,6 +108,7 @@ class Glass extends StatelessWidget {
     return body;
   }
 }
+
 
 // ───────────────────────── Buttons ─────────────────────────
 enum BtnVariant { primary, glass, danger }
@@ -189,24 +147,15 @@ class Btn extends StatelessWidget {
       case BtnVariant.primary:
         deco = BoxDecoration(
           borderRadius: BorderRadius.circular(T.rBtn),
-          gradient: T.btnLiquidGradient,
-          border: Border.all(color: T.white(.4), width: .5),
-          boxShadow: T.btnShadow,
+          color: T.teal,
         );
         break;
+      // Every button is solid teal (danger/glass variants no longer differ).
       case BtnVariant.danger:
-        fg = T.red300;
-        deco = BoxDecoration(
-          borderRadius: BorderRadius.circular(T.rBtn),
-          color: T.op(T.red500, .25),
-          border: Border.all(color: T.op(T.red400, .4)),
-        );
-        break;
       case BtnVariant.glass:
         deco = BoxDecoration(
           borderRadius: BorderRadius.circular(T.rBtn),
-          color: T.glassPillFill,
-          border: Border.all(color: T.glassPillBorder, width: .5),
+          color: T.teal,
         );
         break;
     }
@@ -222,10 +171,7 @@ class Btn extends StatelessWidget {
           alignment: Alignment.center,
           decoration: deco,
           child: DefaultTextStyle(
-            style: T.btn.copyWith(
-              color: fg,
-              shadows: variant == BtnVariant.primary ? [Shadow(color: T.blk(.2), offset: const Offset(0, 1), blurRadius: 2)] : null,
-            ),
+            style: T.btn.copyWith(color: fg),
             child: IconTheme(
               data: IconThemeData(color: fg, size: 18),
               child: Row(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, spacing: 8, children: [Flexible(child: child)]),
@@ -325,7 +271,7 @@ class _FieldState extends State<Field> {
                 maxLength: widget.maxLength,
                 enabled: widget.enabled,
                 textInputAction: widget.textInputAction,
-                cursorColor: T.cyan400,
+                cursorColor: T.teal,
                 style: style,
                 decoration: InputDecoration(
                   isCollapsed: true,
@@ -369,7 +315,7 @@ class Toggle extends StatelessWidget {
               duration: const Duration(milliseconds: 150),
               width: 46,
               height: 28,
-              decoration: BoxDecoration(color: on ? T.emerald : T.white(.15), borderRadius: BorderRadius.circular(99)),
+              decoration: BoxDecoration(color: on ? T.teal : T.white(.15), borderRadius: BorderRadius.circular(99)),
               child: Stack(children: [
                 AnimatedPositioned(
                   duration: const Duration(milliseconds: 150),
@@ -378,7 +324,7 @@ class Toggle extends StatelessWidget {
                   child: Container(
                     width: 24,
                     height: 24,
-                    decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, boxShadow: [BoxShadow(color: T.blk(.25), blurRadius: 3, offset: const Offset(0, 1))]),
+                    decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle),
                   ),
                 ),
               ]),
@@ -429,7 +375,7 @@ class Numpad extends StatelessWidget {
 class PinDots extends StatelessWidget {
   final int n;
   final int max;
-  const PinDots({super.key, required this.n, this.max = 4});
+  const PinDots({super.key, required this.n, this.max = 6});
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 16),
@@ -442,9 +388,8 @@ class PinDots extends StatelessWidget {
               height: 14,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: i < n ? T.cyan300 : Colors.transparent,
-                border: Border.all(color: i < n ? T.cyan200 : T.white(.3)),
-                boxShadow: i < n ? T.glow(T.cyan400) : null,
+                color: i < n ? T.teal : Colors.transparent,
+                border: Border.all(color: i < n ? T.teal : T.white(.3)),
               ),
             ),
         ]),
@@ -508,42 +453,13 @@ class AppBackground extends StatefulWidget {
 }
 
 class _AppBackgroundState extends State<AppBackground> with TickerProviderStateMixin {
-  late final AnimationController _a = AnimationController(vsync: this, duration: const Duration(seconds: 14))..repeat(reverse: true);
-  late final AnimationController _b = AnimationController(vsync: this, duration: const Duration(seconds: 18))..repeat(reverse: true);
-  @override
-  void dispose() {
-    _a.dispose();
-    _b.dispose();
-    super.dispose();
-  }
-
-  Widget _orb(double size, Color c, double op) => Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [T.op(c, op), T.op(c, 0)], stops: const [.25, 1])),
-      );
-
+  // Flat background: no animated glow orbs (removed for a clean look and to
+  // stop the continuous full-screen repaints that made the app lag).
   @override
   Widget build(BuildContext context) {
     return ColoredBox(
       color: T.bg,
-      child: Stack(children: [
-        Positioned(
-          top: -60 - 60, right: -90 - 60,
-          child: IgnorePointer(child: AnimatedBuilder(animation: _a, builder: (_, _) {
-            final v = Curves.easeInOut.transform(_a.value);
-            return Transform.translate(offset: Offset(-40 * v, 60 * v), child: Transform.scale(scale: 1 + .15 * v, child: _orb(420, T.cyan600, .5)));
-          })),
-        ),
-        Positioned(
-          bottom: 120 - 60, left: -110 - 60,
-          child: IgnorePointer(child: AnimatedBuilder(animation: _b, builder: (_, _) {
-            final v = Curves.easeInOut.transform(1 - _b.value);
-            return Transform.translate(offset: Offset(-40 * v, 60 * v), child: Transform.scale(scale: 1 + .15 * v, child: _orb(400, T.indigo500, .4)));
-          })),
-        ),
-        Positioned.fill(child: widget.child),
-      ]),
+      child: SizedBox.expand(child: widget.child),
     );
   }
 }
@@ -595,10 +511,8 @@ class AppBottomNav extends StatelessWidget {
               bottom: 0,
               child: Container(
                 decoration: BoxDecoration(
-                  color: T.white(.16),
+                  color: T.white(.10),
                   borderRadius: BorderRadius.circular(T.rNavItem),
-                  border: Border.all(color: T.white(.3), width: .5),
-                  boxShadow: T.lensShadow,
                 ),
               ),
             ),
@@ -612,9 +526,9 @@ class AppBottomNav extends StatelessWidget {
                       behavior: HitTestBehavior.opaque,
                       onTap: () => onTap(i),
                       child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        Icon(tabs[i].icon, size: 21, color: i == index ? T.cyan300 : T.white(.55)),
+                        Icon(tabs[i].icon, size: 21, color: i == index ? T.teal : T.white(.55)),
                         const SizedBox(height: 2),
-                        Text(tabs[i].label, style: T.text(10, w: i == index ? T.w700 : T.w500, color: i == index ? T.cyan300 : T.white(.55))),
+                        Text(tabs[i].label, style: T.text(10, w: i == index ? T.w700 : T.w500, color: i == index ? T.teal : T.white(.55))),
                       ]),
                     ),
                   ),
@@ -821,13 +735,16 @@ class _NfcTapState extends State<NfcTap> with TickerProviderStateMixin {
   int step = 0, left = 5;
   bool forceFail = false;
   Timer? _t;
-  late final AnimationController _ring = AnimationController(vsync: this, duration: const Duration(milliseconds: 2400))..repeat();
-  late final AnimationController _shake = AnimationController(vsync: this, duration: const Duration(milliseconds: 500));
-  late final AnimationController _dash = AnimationController(vsync: this, duration: const Duration(seconds: 5));
+  late final AnimationController _ring;
+  late final AnimationController _shake;
+  late final AnimationController _dash;
 
   @override
   void initState() {
     super.initState();
+    _ring = AnimationController(vsync: this, duration: const Duration(milliseconds: 2400))..repeat();
+    _shake = AnimationController(vsync: this, duration: const Duration(milliseconds: 500));
+    _dash = AnimationController(vsync: this, duration: const Duration(seconds: 5));
     _enter();
   }
 
@@ -901,14 +818,13 @@ class _NfcTapState extends State<NfcTap> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final fail = phase == _Phase.fail, ok = phase == _Phase.ok;
-    final tone = fail ? T.red400 : ok ? T.emerald400 : T.cyan400;
-    final title = ok ? 'Approved ✓' : fail ? 'Unauthorized Card' : phase == _Phase.verify ? 'Verifying TPT4 & TMAC…' : widget.title;
+    final tone = fail ? T.red400 : ok ? T.emerald400 : T.teal;
+    final title = ok ? 'Approved ✓' : fail ? 'Unauthorized Card' : phase == _Phase.verify ? 'Verifying Card & MAC…' : widget.title;
     return Material(
       type: MaterialType.transparency,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+      child: ClipRect(
         child: Container(
-          color: T.op(T.bg, .9),
+          color: T.op(T.bg, .97),
           padding: EdgeInsets.fromLTRB(24, MediaQuery.of(context).padding.top + 56, 24, 32),
           child: Stack(children: [
             Column(children: [
@@ -948,7 +864,7 @@ class _NfcTapState extends State<NfcTap> with TickerProviderStateMixin {
                         scale: ok ? 1.1 : 1,
                         duration: const Duration(milliseconds: 250),
                         child: Container(
-                          decoration: BoxDecoration(shape: BoxShape.circle, boxShadow: [BoxShadow(color: T.op(tone, .33), blurRadius: 60)]),
+                          decoration: const BoxDecoration(shape: BoxShape.circle),
                           child: Glass(
                             radius: 64, width: 128, height: 128,
                             child: Icon(ok ? LucideIcons.check : fail ? LucideIcons.shieldAlert : LucideIcons.nfc, size: 56, color: tone),
@@ -985,7 +901,7 @@ class _NfcTapState extends State<NfcTap> with TickerProviderStateMixin {
               Padding(
                 padding: EdgeInsets.only(top: i == 0 ? 0 : 6),
                 child: DefaultTextStyle(
-                  style: T.mono(11.5, color: i < step ? T.emerald400 : i == step ? T.cyan400 : T.white(.3)),
+                  style: T.mono(11.5, color: i < step ? T.emerald400 : i == step ? T.teal : T.white(.3)),
                   child: Row(children: [
                     i < step ? const Icon(LucideIcons.check, size: 14, color: T.emerald400) : const SizedBox(width: 14, child: Center(child: Text('›'))),
                     const SizedBox(width: 8),

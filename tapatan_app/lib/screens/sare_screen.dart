@@ -274,7 +274,7 @@ class _SarEScreenState extends ConsumerState<SarEScreen> {
                                   Text('Available', style: T.caption.copyWith(fontSize: 9)),
                                   Text(
                                     '₱${user.balance.toStringAsFixed(2)}',
-                                    style: T.mono(12, w: T.w700, color: T.cyan300),
+                                    style: T.mono(12, w: T.w700, color: T.white(.92)),
                                   ),
                                 ],
                               ),
@@ -304,13 +304,12 @@ class _SarEScreenState extends ConsumerState<SarEScreen> {
                                     child: Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                       decoration: BoxDecoration(
-                                        color: T.cyan400,
+                                        color: T.teal,
                                         borderRadius: BorderRadius.circular(999),
-                                        boxShadow: T.glow(T.cyan400, 8),
                                       ),
                                       child: Text(
                                         '$_cartItemCount',
-                                        style: T.mono(11, w: T.w800, color: T.bg),
+                                        style: T.mono(11, w: T.w800, color: Colors.white),
                                       ),
                                     ),
                                   ),
@@ -352,12 +351,12 @@ class _SarEScreenState extends ConsumerState<SarEScreen> {
                                               style: T.text(
                                                 13,
                                                 w: _selectedStore == i ? T.w700 : T.w500,
-                                                color: _selectedStore == i ? T.cyan300 : Colors.white,
+                                                color: _selectedStore == i ? T.teal : Colors.white,
                                               ),
                                             ),
                                           ),
                                           if (_selectedStore == i)
-                                            Icon(LucideIcons.check, size: 16, color: T.cyan300),
+                                            Icon(LucideIcons.check, size: 16, color: T.teal),
                                         ],
                                       ),
                                     ),
@@ -386,10 +385,10 @@ class _SarEScreenState extends ConsumerState<SarEScreen> {
                                     padding: const EdgeInsets.symmetric(horizontal: 14),
                                     alignment: Alignment.center,
                                     decoration: BoxDecoration(
-                                      color: isSelected ? T.op(T.cyan400, 0.20) : T.white(0.05),
+                                      color: isSelected ? T.teal : T.white(0.05),
                                       borderRadius: BorderRadius.circular(999),
                                       border: Border.all(
-                                        color: isSelected ? T.op(T.cyan300, 0.60) : T.white(0.10),
+                                        color: isSelected ? T.teal : T.white(0.10),
                                       ),
                                     ),
                                     child: Text(
@@ -397,7 +396,7 @@ class _SarEScreenState extends ConsumerState<SarEScreen> {
                                       style: T.text(
                                         12,
                                         w: T.w600,
-                                        color: isSelected ? T.cyan200 : T.white(0.60),
+                                        color: isSelected ? Colors.white : T.white(0.60),
                                       ),
                                     ),
                                   ),
@@ -498,7 +497,7 @@ class _SarEScreenState extends ConsumerState<SarEScreen> {
                                 children: [
                                   Text(
                                     '₱${product.price.toStringAsFixed(0)}',
-                                    style: T.mono(14, w: T.w800, color: T.cyan200),
+                                    style: T.mono(14, w: T.w800, color: T.white(.92)),
                                   ),
                                   if (qty == 0)
                                     PressScale(
@@ -508,8 +507,7 @@ class _SarEScreenState extends ConsumerState<SarEScreen> {
                                         padding: const EdgeInsets.symmetric(horizontal: 10),
                                         decoration: BoxDecoration(
                                           borderRadius: BorderRadius.circular(999),
-                                          gradient: T.btnLiquidGradient,
-                                          boxShadow: T.btnShadow,
+                                          color: T.teal,
                                         ),
                                         child: Row(
                                           mainAxisSize: MainAxisSize.min,

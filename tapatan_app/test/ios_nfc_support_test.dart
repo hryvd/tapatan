@@ -41,7 +41,7 @@ void main() {
       expect(infoPlist.existsSync(), isTrue);
       final content = infoPlist.readAsStringSync();
 
-      expect(content, contains('<string>tap@tan v2</string>'));
+      expect(content, contains('<string>tap@tan v3</string>'));
       expect(content, contains('<key>NFCReaderUsageDescription</key>'));
       expect(
         content,
@@ -84,7 +84,7 @@ void main() {
       );
       expect(
         pbxContent,
-        contains('PRODUCT_BUNDLE_IDENTIFIER = com.sare.secureNfcPay.v2;'),
+        contains('PRODUCT_BUNDLE_IDENTIFIER = com.sare.secureNfcPay.v3;'),
       );
     });
   });

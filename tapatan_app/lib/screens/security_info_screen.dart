@@ -233,10 +233,9 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                                 Container(
                                   width: 6,
                                   height: 6,
-                                  decoration: BoxDecoration(
+                                  decoration: const BoxDecoration(
                                     color: T.emerald300,
                                     shape: BoxShape.circle,
-                                    boxShadow: T.glow(T.emerald, 6),
                                   ),
                                 ),
                                 const SizedBox(width: 6),
@@ -270,7 +269,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                                     painter: _AccuracyRingPainter(
                                       progress: 0.947,
                                       trackColor: T.white(0.10),
-                                      fillColor: T.cyan300,
+                                      fillColor: T.teal,
                                     ),
                                   ),
                                   Column(
@@ -372,7 +371,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
           decoration: BoxDecoration(
             color: active ? Colors.white : Colors.transparent,
             borderRadius: BorderRadius.circular(12),
-            boxShadow: active ? T.glow(T.white(0.3), 8) : null,
           ),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -589,7 +587,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
           children: [
             Row(
               children: [
-                const Icon(LucideIcons.shieldCheck, size: 18, color: T.cyan300),
+                const Icon(LucideIcons.shieldCheck, size: 18, color: T.teal),
                 const SizedBox(width: 8),
                 Text('Progressive Auth Tiers', style: T.text(14, w: T.w700)),
               ],
@@ -782,7 +780,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
           children: [
             Row(
               children: [
-                const Icon(LucideIcons.terminal, size: 18, color: T.cyan300),
+                const Icon(LucideIcons.terminal, size: 18, color: T.teal),
                 const SizedBox(width: 8),
                 Text('APDU Command Protocol', style: T.text(14, w: T.w700)),
               ],
@@ -830,8 +828,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                     width: 44,
                     height: 32,
                     decoration: BoxDecoration(
-                      gradient: isActive ? T.btnLiquidGradient : null,
-                      color: isActive ? null : T.white(0.10),
+                      color: isActive ? T.teal : T.white(0.10),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: const Center(
@@ -1396,7 +1393,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(LucideIcons.info, size: 14, color: T.cyan300),
+                const Icon(LucideIcons.info, size: 14, color: T.teal),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -1702,7 +1699,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
               ],
             ),
           ),
-          Badge2(tag, color: T.cyan400, textColor: T.cyan300, fontSize: 9),
+          Badge2(tag, color: T.teal, textColor: Colors.white, fontSize: 9),
         ],
       ),
     );
@@ -1794,7 +1791,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
               color: T.white(0.08),
               borderRadius: BorderRadius.circular(6),
             ),
-            child: Text(code, style: T.mono(10, w: T.w700, color: T.cyan300)),
+            child: Text(code, style: T.mono(10, w: T.w700, color: T.teal)),
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -1880,7 +1877,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
   Widget _buildAuthTiersTable() {
     const tiers = [
       {'tier': 'Micro', 'amt': '< ₱100', 'auth': 'Tap-and-go (zero-PIN)', 'c': T.emerald},
-      {'tier': 'Low', 'amt': '₱100–₱500', 'auth': 'Card tap (counter check)', 'c': T.cyan400},
+      {'tier': 'Low', 'amt': '₱100–₱500', 'auth': 'Card tap (counter check)', 'c': T.teal},
       {'tier': 'Medium', 'amt': '₱500–₱5000', 'auth': 'Card + on-card PIN verify', 'c': T.amber500},
       {'tier': 'High', 'amt': '> ₱5000', 'auth': 'Card + PIN + OTP auth', 'c': T.red400},
     ];

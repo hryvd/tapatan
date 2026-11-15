@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'dart:ui';
 
 class GlassContainer extends StatelessWidget {
   final Widget child;
@@ -51,20 +50,9 @@ class GlassContainer extends StatelessWidget {
       height: height,
       decoration: BoxDecoration(
         borderRadius: effectiveBorderRadius,
-        boxShadow: boxShadow ?? [
-          const BoxShadow(color: Color(0x0A000000), blurRadius: 4, offset: Offset(0, 2))
-        ],
+        boxShadow: boxShadow,
       ),
-      child: (isGlass && blur > 0)
-          ? ClipRRect(
-              borderRadius: effectiveBorderRadius,
-              clipBehavior: clipBehavior,
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-                child: innerContainer,
-              ),
-            )
-          : innerContainer,
+      child: innerContainer,
     );
   }
 }

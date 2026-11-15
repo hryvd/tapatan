@@ -39,7 +39,7 @@ class _AccountBackendSettingsSheetState
   bool _strictCardBinding = true;
   bool _allowCardRebind = true;
   bool _syncCardHolderName = true;
-  int _pinMinLen = 4;
+  int _pinMinLen = 6;
   int _pinMaxLen = 6;
   int _savedAccountCount = 0;
 
@@ -155,16 +155,16 @@ class _AccountBackendSettingsSheetState
                         width: 38,
                         height: 38,
                         decoration: BoxDecoration(
-                          color: T.op(T.cyan600, .2),
+                          color: T.op(T.teal, .16),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color: T.op(T.cyan400, .3),
+                            color: T.op(T.teal, .28),
                             width: .5,
                           ),
                         ),
                         child: const Icon(
                           LucideIcons.shieldCheck,
-                          color: T.cyan300,
+                          color: T.teal,
                           size: 20,
                         ),
                       ),
@@ -198,7 +198,7 @@ class _AccountBackendSettingsSheetState
                           height: 180,
                           child: Center(
                             child:
-                                CircularProgressIndicator(color: T.cyan400),
+                                CircularProgressIndicator(color: T.teal),
                           ),
                         )
                       : SingleChildScrollView(
@@ -240,7 +240,7 @@ class _AccountBackendSettingsSheetState
                                         child: Text(
                                           _testing ? 'Testing...' : 'Test',
                                           style: T.btn.copyWith(
-                                            color: T.cyan300,
+                                            color: Colors.white,
                                             fontSize: 13,
                                           ),
                                         ),
@@ -289,7 +289,7 @@ class _AccountBackendSettingsSheetState
                                   child: Text(
                                     'PHP',
                                     style: T.mono(12,
-                                        w: T.w700, color: T.cyan300),
+                                        w: T.w700, color: T.teal),
                                   ),
                                 ),
                               ),

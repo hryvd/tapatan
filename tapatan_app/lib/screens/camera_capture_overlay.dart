@@ -78,8 +78,7 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
 
   late AnimationController _scanLineController;
   late Animation<double> _scanLineAnim;
-  late AnimationController _pulseController;
-  late Animation<double> _pulseAnim;
+  bool _disposed = false;
 
   @override
   void initState() {
@@ -90,13 +89,6 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
     )..repeat(reverse: true);
     _scanLineAnim = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _scanLineController, curve: Curves.easeInOut),
-    );
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1000),
-    )..repeat(reverse: true);
-    _pulseAnim = Tween<double>(begin: 0.6, end: 1.0).animate(
-      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
     _initCamera();
@@ -122,12 +114,16 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
 
       final controller = CameraController(
         description,
-        ResolutionPreset.high,
+        ResolutionPreset.medium,
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.jpeg,
       );
 
       await controller.initialize();
+      if (_disposed) {
+        await controller.dispose();
+        return;
+      }
 
       if (mounted) {
         setState(() {
@@ -180,9 +176,13 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
 
   @override
   void dispose() {
+    _disposed = true;
     _scanLineController.dispose();
-    _pulseController.dispose();
-    _controller?.dispose();
+    final ctrl = _controller;
+    _controller = null;
+    try {
+      ctrl?.dispose();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -204,27 +204,45 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
           // Dark liquid-glass overlay with cutout
           if (_isInitialized) _buildOverlay(context),
 
-          // Top navigation bar
+          // Top navigation bar with well-placed X button and centered title
           SafeArea(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              child: Row(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              child: Stack(
+                alignment: Alignment.center,
                 children: [
-                  GlassIconBtn(
-                    icon: LucideIcons.x,
-                    size: 40,
-                    iconSize: 18,
-                    onTap: () => Navigator.of(context).pop(null),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: T.surfaceStrong,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: T.surfaceBorder),
+                    ),
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(widget.title, style: T.text(16, w: T.w800)),
-                        Text(widget.subtitle, style: T.caption),
+                        Text(widget.title, style: T.text(14, w: T.w700)),
+                        Text(widget.subtitle,
+                            style: T.caption.copyWith(fontSize: 11)),
                       ],
+                    ),
+                  ),
+                  Positioned(
+                    right: 0,
+                    child: PressScale(
+                      onTap: () => Navigator.of(context).pop(null),
+                      child: Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: T.surfaceStrong,
+                          border: Border.all(color: T.surfaceBorder),
+                        ),
+                        child: const Icon(LucideIcons.x,
+                            color: Colors.white, size: 20),
+                      ),
                     ),
                   ),
                 ],
@@ -232,53 +250,63 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
             ),
           ),
 
-          // Bottom capture button
+          // Bottom capture button (solid teal, clean professional)
           if (_isInitialized)
             Align(
               alignment: Alignment.bottomCenter,
               child: SafeArea(
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 48),
-                  child: GestureDetector(
-                    onTap: _capture,
-                    child: AnimatedBuilder(
-                      animation: _pulseAnim,
-                      builder: (_, child) => Transform.scale(
-                        scale: _isCapturing ? 0.92 : 1.0,
-                        child: child,
-                      ),
-                      child: Container(
-                        width: 76,
-                        height: 76,
+                  padding: const EdgeInsets.only(bottom: 36),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 4),
                         decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: T.btnLiquidGradient,
-                          border: Border.all(color: T.white(.6), width: 2),
-                          boxShadow: [
-                            BoxShadow(
-                              color: T.cyan500.withValues(
-                                alpha: 0.5 * _pulseAnim.value,
-                              ),
-                              blurRadius: 26,
-                              spreadRadius: 4,
-                            ),
-                          ],
+                          color: T.surfaceStrong,
+                          borderRadius: BorderRadius.circular(99),
+                          border: Border.all(color: T.surfaceBorder),
                         ),
-                        child: _isCapturing
-                            ? const Padding(
-                                padding: EdgeInsets.all(22),
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 3,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(
-                                LucideIcons.camera,
-                                color: T.slate900,
-                                size: 30,
-                              ),
+                        child: Text(
+                          'Hold card within frame · Tap to capture',
+                          style: T.text(11, color: T.white(.7)),
+                        ),
                       ),
-                    ),
+                      const SizedBox(height: 14),
+                      GestureDetector(
+                        onTap: _capture,
+                        child: AnimatedScale(
+                          scale: _isCapturing ? 0.92 : 1.0,
+                          duration: const Duration(milliseconds: 120),
+                          child: Container(
+                            width: 72,
+                            height: 72,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: T.teal,
+                              border: Border.all(
+                                color: Colors.white,
+                                width: 2.5,
+                              ),
+                            ),
+                            child: _isCapturing
+                                ? const Padding(
+                                    padding: EdgeInsets.all(20),
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 3,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(
+                                    LucideIcons.camera,
+                                    color: Colors.white,
+                                    size: 28,
+                                  ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -347,7 +375,7 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
                     gradient: LinearGradient(
                       colors: [
                         Colors.transparent,
-                        T.cyan400.withValues(alpha: 0.85),
+                        T.teal.withValues(alpha: 0.9),
                         Colors.transparent,
                       ],
                     ),
@@ -369,7 +397,7 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
     final top = centerY - frameH / 2;
     const len = 24.0;
     const thick = 3.0;
-    const color = T.cyan400;
+    const color = T.teal;
 
     Widget corner(double x, double y, bool flipH, bool flipV) {
       return Positioned(
@@ -404,7 +432,7 @@ class _CameraCaptureOverlayState extends State<CameraCaptureOverlay>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const CircularProgressIndicator(color: T.cyan400),
+            const CircularProgressIndicator(color: T.teal),
             const SizedBox(height: 16),
             Text(
               'Starting camera...',
@@ -464,29 +492,27 @@ class _OverlayPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final dimPaint = Paint()..color = T.blk(.65);
-    final clearPaint = Paint()..blendMode = BlendMode.clear;
 
     final left = (size.width - frameWidth) / 2;
     final top = centerY - frameHeight / 2;
     final rect = Rect.fromLTWH(left, top, frameWidth, frameHeight);
 
-    canvas.saveLayer(Rect.fromLTWH(0, 0, size.width, size.height), Paint());
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), dimPaint);
-
+    // Path subtraction avoids full-screen GPU saveLayer overhead on camera preview
+    final outer = Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
+    final hole = Path();
     if (isOval) {
-      canvas.drawOval(rect, clearPaint);
+      hole.addOval(rect);
     } else {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(rect, const Radius.circular(16)),
-        clearPaint,
-      );
+      hole.addRRect(RRect.fromRectAndRadius(rect, const Radius.circular(16)));
     }
-
-    canvas.restore();
+    canvas.drawPath(
+      Path.combine(PathOperation.difference, outer, hole),
+      dimPaint,
+    );
 
     // Frame border
     final borderPaint = Paint()
-      ..color = T.cyan400
+      ..color = T.teal
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.0;
 
@@ -502,7 +528,10 @@ class _OverlayPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_OverlayPainter old) =>
-      old.scanLineProgress != scanLineProgress;
+      old.frameWidth != frameWidth ||
+      old.frameHeight != frameHeight ||
+      old.centerY != centerY ||
+      old.isOval != isOval;
 }
 
 // ─── Corner Marker Painter ────────────────────────────────────────────────

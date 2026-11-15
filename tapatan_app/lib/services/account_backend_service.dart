@@ -30,7 +30,7 @@ class AccountManagementConfig {
     this.backendUrl = '',
     this.useRemoteBackend = false,
     this.initialWalletBalance = 5000.0,
-    this.pinMinLength = 4,
+    this.pinMinLength = 6,
     this.pinMaxLength = 6,
     this.maxPinRetries = 5,
     this.requirePinOnEmailLogin = true,
@@ -88,7 +88,7 @@ class AccountManagementConfig {
       useRemoteBackend: json['useRemoteBackend'] == true,
       initialWalletBalance:
           (json['initialWalletBalance'] as num?)?.toDouble() ?? 5000.0,
-      pinMinLength: (json['pinMinLength'] as num?)?.toInt() ?? 4,
+      pinMinLength: (json['pinMinLength'] as num?)?.toInt() ?? 6,
       pinMaxLength: (json['pinMaxLength'] as num?)?.toInt() ?? 6,
       maxPinRetries: (json['maxPinRetries'] as num?)?.toInt() ?? 5,
       requirePinOnEmailLogin: json['requirePinOnEmailLogin'] != false,

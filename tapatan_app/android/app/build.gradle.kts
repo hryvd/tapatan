@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
@@ -16,7 +17,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.sare.secure_nfc_pay.v2"
+        applicationId = "com.sare.secure_nfc_pay.v3"
         // minSdk 24 required by nfc_manager for ISO-DEP APDU transceive (JCOP plan Phase C)
         minSdk = 24
         targetSdk = flutter.targetSdkVersion
@@ -26,9 +27,11 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            // Keep R8 off: ML Kit / nfc_manager rely on reflection and crashed when shrunk.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }

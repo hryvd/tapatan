@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
@@ -46,25 +45,33 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
   String _errorMsg = '';
 
   Timer? _timer;
-  late final AnimationController _ringCtrl = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 2400),
-  )..repeat();
-  late final AnimationController _shakeCtrl = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 500),
-  );
-  late final AnimationController _countdownCtrl = AnimationController(
-    vsync: this,
-    duration: const Duration(seconds: 5),
-  );
+  late final AnimationController _ringCtrl;
+  late final AnimationController _shakeCtrl;
+  late final AnimationController _countdownCtrl;
 
   static const _apduSteps = [
     'VERIFY 0x20 · Card PIN ok',
     'GET CHALLENGE 0x84 · 8B nonce',
-    'INTERNAL AUTHENTICATE 0x88 · TPT4',
+    'INTERNAL AUTHENTICATE 0x88',
     'STORE DATA 0xE2 · arm token',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _ringCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    )..repeat();
+    _shakeCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+    _countdownCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 5),
+    );
+  }
 
   @override
   void dispose() {
@@ -77,7 +84,7 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
   }
 
   Future<void> _verifyPinAndProceed() async {
-    if (_pin.length < 4 || _pinChecking) return;
+    if (_pin.length != 6 || _pinChecking) return;
     setState(() {
       _pinChecking = true;
       _pinError = '';
@@ -102,11 +109,16 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
       }
     }
 
+    // Card OR PIN: a correct PIN is sufficient on its own, no card tap needed.
+    _actionCompleted = true;
+    _timer?.cancel();
     setState(() {
       _pinChecking = false;
-      _phase = _UnlockPhase.scan;
+      _phase = _UnlockPhase.ok;
     });
-    _startScan();
+    Future.delayed(const Duration(milliseconds: 450), () {
+      if (mounted) widget.onUnlocked();
+    });
   }
 
   void _skipPinToNfc() {
@@ -215,10 +227,9 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
     if (_phase == _UnlockPhase.pin) {
       return Material(
         type: MaterialType.transparency,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: ClipRect(
           child: Container(
-            color: T.blk(.55),
+            color: T.blk(.7),
             alignment: Alignment.bottomCenter,
             child: Glass(
               kind: GlassKind.strong,
@@ -241,7 +252,7 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text('Arm Card · Step 1 of 2',
+                      Text('Tap ready',
                           style: T.text(17, w: T.w700)),
                       GlassIconBtn(
                         icon: LucideIcons.x,
@@ -251,7 +262,7 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Enter your account PIN before tapping your JCOP4 secure element.',
+                    'Enter your PIN or tap your card. Either one is enough.',
                     style: T.text(12.5, color: T.white(.55)),
                   ),
                   PinDots(n: _pin.length, max: 6),
@@ -267,21 +278,24 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                   Numpad(
                     value: _pin,
                     max: 6,
-                    onChanged: (v) => setState(() {
-                      _pin = v;
-                      _pinError = '';
-                    }),
+                    onChanged: (v) {
+                      if (_pinChecking) return;
+                      setState(() {
+                        _pin = v;
+                        _pinError = '';
+                      });
+                      if (v.length == 6) _verifyPinAndProceed();
+                    },
                   ),
                   const SizedBox(height: 14),
-                  Btn.text(
-                    _pinChecking ? 'Verifying...' : 'Verify PIN & Tap Card',
-                    width: double.infinity,
-                    disabled: _pin.length < 4 || _pinChecking,
-                    onTap: _verifyPinAndProceed,
-                  ),
+                  if (_pinChecking)
+                    Center(
+                      child: Text('Verifying...',
+                          style: T.text(13, color: T.white(.55))),
+                    ),
                   const SizedBox(height: 10),
                   LinkText(
-                    'Use hardware NFC tap directly (Skip PIN)',
+                    'Tap card instead',
                     onTap: _skipPinToNfc,
                   ),
                 ],
@@ -295,21 +309,20 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
     // Phase scan / verify / ok / fail — 1:1 NfcTap Overlays styling
     final isFail = _phase == _UnlockPhase.fail;
     final isOk = _phase == _UnlockPhase.ok;
-    final tone = isFail ? T.red400 : (isOk ? T.emerald400 : T.cyan400);
+    final tone = isFail ? T.red400 : (isOk ? T.emerald400 : T.teal);
     final headline = isOk
         ? 'Card Armed ✓'
         : isFail
             ? 'Unauthorized Card'
             : _phase == _UnlockPhase.verify
-                ? 'Verifying TPT4 & TMAC…'
+                ? 'Verifying Card & MAC…'
                 : 'Tap card to arm';
 
     return Material(
       type: MaterialType.transparency,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+      child: ClipRect(
         child: Container(
-          color: T.op(T.bg, .92),
+          color: T.op(T.bg, .98),
           padding: EdgeInsets.fromLTRB(
             24,
             MediaQuery.of(context).padding.top + 20,
@@ -397,12 +410,8 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                               scale: isOk ? 1.1 : 1.0,
                               duration: const Duration(milliseconds: 250),
                               child: Container(
-                                decoration: BoxDecoration(
+                                decoration: const BoxDecoration(
                                   shape: BoxShape.circle,
-                                  boxShadow: [
-                                    BoxShadow(
-                                        color: T.op(tone, .33), blurRadius: 60),
-                                  ],
                                 ),
                                 child: Glass(
                                   radius: 64,
@@ -462,7 +471,7 @@ class _NfcUnlockScreenState extends State<NfcUnlockScreen>
                         color: i < _apduStep
                             ? T.emerald400
                             : i == _apduStep
-                                ? T.cyan400
+                                ? T.teal
                                 : T.white(.3),
                       ),
                       child: Row(

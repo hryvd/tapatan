@@ -1,10 +1,10 @@
 import 'dart:async';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../providers/user_provider.dart';
+import '../services/account_backend_service.dart';
 import '../services/card_revocation_service.dart';
 import '../services/jcop_apdu_service.dart';
 import '../services/nfc_service.dart';
@@ -70,22 +70,13 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
   final TextEditingController _amountCtrl = TextEditingController();
   final TextEditingController _otpCtrl = TextEditingController();
 
-  late final AnimationController _ringCtrl = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 2400),
-  )..repeat();
-  late final AnimationController _shakeCtrl = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 500),
-  );
-  late final AnimationController _countdownCtrl = AnimationController(
-    vsync: this,
-    duration: const Duration(seconds: 5),
-  );
+  late final AnimationController _ringCtrl;
+  late final AnimationController _shakeCtrl;
+  late final AnimationController _countdownCtrl;
 
   static const _apduLines = [
     'SELECT 0xA4 · AID F07461706174616E0101',
-    'TPT4 Turing handshake',
+    'INTERNAL AUTH · Turing handshake',
     'INTERNAL AUTHENTICATE 0x88',
     'STORE DATA 0xE2 · payment token',
   ];
@@ -93,6 +84,18 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
   @override
   void initState() {
     super.initState();
+    _ringCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    )..repeat();
+    _shakeCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+    _countdownCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 5),
+    );
     if (widget.pendingOrder != null) {
       _amountStr = widget.pendingOrder!.totalAmount.toStringAsFixed(2);
       _amountCtrl.text = _amountStr;
@@ -181,22 +184,45 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
     });
   }
 
-  void _handleAmountNext() {
+  void _handleAmountNext({bool usePin = false}) {
     if (_amount <= 0) return;
-    final level = _authLevel();
-    if (level == 'micro' || level == 'low') {
-      _startWriteFlow();
-    } else {
+    if (usePin) {
       setState(() {
         _pinStr = '';
         _errorMsg = '';
         _step = FlowStep.pin;
       });
+    } else if (_authLevel() == 'high') {
+      setState(() {
+        _otpStr = '';
+        _errorMsg = '';
+        _step = FlowStep.otp;
+      });
+    } else {
+      // Card OR PIN, not both: card tap proceeds directly without PIN.
+      _startWriteFlow();
     }
   }
 
-  void _handlePinNext() {
-    if (_pinStr.length < 4) return;
+  Future<void> _handlePinNext() async {
+    if (_pinStr.length != 6 || _pinRetriesLeft == 0) return;
+    final active = await AccountBackendService.getActiveSessionAccount();
+    if (!mounted) return;
+    if (active != null && active.pinHash.isNotEmpty) {
+      final res = await AccountBackendService.loginWithEmailPin(
+        email: active.email,
+        pin: _pinStr,
+      );
+      if (!mounted) return;
+      if (!res.success) {
+        setState(() {
+          _pinStr = '';
+          _errorMsg = res.error ?? 'Incorrect PIN';
+          if (_pinRetriesLeft > 0) _pinRetriesLeft--;
+        });
+        return;
+      }
+    }
     if (_authLevel() == 'high') {
       setState(() {
         _otpStr = '';
@@ -204,7 +230,8 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
         _step = FlowStep.otp;
       });
     } else {
-      _startWriteFlow();
+      // Card OR PIN, not both: verified 6-digit PIN completes payment without card tap.
+      await _completeWriteSuccess();
     }
   }
 
@@ -323,60 +350,65 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
         _step == FlowStep.otp) {
       return Material(
         type: MaterialType.transparency,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-          child: Container(
-            color: T.blk(.55),
-            alignment: Alignment.bottomCenter,
-            padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).viewInsets.bottom),
-            child: Glass(
-              kind: GlassKind.strong,
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(T.rSheet)),
-              padding: EdgeInsets.fromLTRB(
-                  20, 10, 20, MediaQuery.of(context).padding.bottom + 24),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 36,
-                        height: 4,
-                        margin: const EdgeInsets.only(bottom: 12),
-                        decoration: BoxDecoration(
-                          color: T.white(.3),
-                          borderRadius: BorderRadius.circular(99),
-                        ),
+        child: Container(
+          color: T.blk(.72),
+          alignment: Alignment.bottomCenter,
+          padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom),
+          child: Glass(
+            kind: GlassKind.strong,
+            borderRadius:
+                const BorderRadius.vertical(top: Radius.circular(T.rSheet)),
+            padding: EdgeInsets.fromLTRB(
+                20, 10, 20, MediaQuery.of(context).padding.bottom + 24),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: T.white(.3),
+                        borderRadius: BorderRadius.circular(99),
                       ),
                     ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Column(
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('NFC Tap to Pay', style: T.text(17, w: T.w700)),
+                            Text('NFC Tap to Pay',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: T.text(17, w: T.w700)),
                             Text(
                               'JCOP4 J3R150 · Turing Composition MAC',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: T.mono(10, color: T.white(.45)),
                             ),
                           ],
                         ),
-                        GlassIconBtn(icon: LucideIcons.x, onTap: _closeFlow),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    if (_step == FlowStep.amount || _step == FlowStep.idle)
-                      _buildAmountSheetBody()
-                    else if (_step == FlowStep.pin)
-                      _buildPinSheetBody()
-                    else
-                      _buildOtpSheetBody(),
-                  ],
-                ),
+                      ),
+                      const SizedBox(width: 8),
+                      GlassIconBtn(icon: LucideIcons.x, onTap: _closeFlow),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  if (_step == FlowStep.amount || _step == FlowStep.idle)
+                    _buildAmountSheetBody()
+                  else if (_step == FlowStep.pin)
+                    _buildPinSheetBody()
+                  else
+                    _buildOtpSheetBody(),
+                ],
               ),
             ),
           ),
@@ -384,10 +416,10 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
       );
     }
 
-    // Fullscreen NFC Tap / Approved / Failed screen (1:1 React NfcTap)
+    // Fullscreen NFC Tap / Approved / Failed screen
     final isFail = _step == FlowStep.error;
     final isReady = _step == FlowStep.ready || _step == FlowStep.success;
-    final tone = isFail ? T.red400 : (isReady ? T.emerald400 : T.cyan400);
+    final tone = isFail ? T.red400 : (isReady ? T.emerald400 : T.teal);
     final headline = isReady
         ? 'Approved ✓'
         : isFail
@@ -398,10 +430,8 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
 
     return Material(
       type: MaterialType.transparency,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(
-          color: T.op(T.bg, .92),
+      child: Container(
+        color: T.op(T.bg, .96),
           padding: EdgeInsets.fromLTRB(
             24,
             MediaQuery.of(context).padding.top + 20,
@@ -482,27 +512,18 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
                             AnimatedScale(
                               scale: isReady ? 1.1 : 1.0,
                               duration: const Duration(milliseconds: 250),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  boxShadow: [
-                                    BoxShadow(
-                                        color: T.op(tone, .33), blurRadius: 60),
-                                  ],
-                                ),
-                                child: Glass(
-                                  radius: 64,
-                                  width: 128,
-                                  height: 128,
-                                  child: Icon(
-                                    isReady
-                                        ? LucideIcons.check
-                                        : isFail
-                                            ? LucideIcons.shieldAlert
-                                            : LucideIcons.nfc,
-                                    size: 56,
-                                    color: tone,
-                                  ),
+                              child: Glass(
+                                radius: 64,
+                                width: 128,
+                                height: 128,
+                                child: Icon(
+                                  isReady
+                                      ? LucideIcons.check
+                                      : isFail
+                                          ? LucideIcons.shieldAlert
+                                          : LucideIcons.nfc,
+                                  size: 56,
+                                  color: tone,
                                 ),
                               ),
                             ),
@@ -530,7 +551,6 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
               ),
             ],
           ),
-        ),
       ),
     );
   }
@@ -562,10 +582,10 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
                     height: 42,
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: selected ? T.op(T.cyan400, .20) : T.white(.06),
+                      color: selected ? T.teal : T.white(.06),
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(
-                        color: selected ? T.op(T.cyan300, .6) : T.white(.1),
+                        color: selected ? T.teal : T.white(.1),
                       ),
                     ),
                     child: Text(
@@ -573,7 +593,7 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
                       style: T.text(
                         12.5,
                         w: T.w700,
-                        color: selected ? T.cyan200 : T.white(.75),
+                        color: selected ? Colors.white : T.white(.75),
                       ),
                     ),
                   ),
@@ -593,25 +613,28 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
         ),
         Text(
           tierLabel,
-          style: T.text(11, color: T.cyan300),
+          style: T.text(11, color: T.white(.60)),
         ),
         const SizedBox(height: 14),
-        Row(
-          children: [
-            Btn.text(
-              'Cancel',
-              variant: BtnVariant.glass,
-              onTap: _closeFlow,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Btn.text(
-                'Continue to NFC Tap',
-                disabled: _amount <= 0,
-                onTap: _handleAmountNext,
-              ),
-            ),
-          ],
+        Btn.text(
+          'Tap Card to Pay',
+          width: double.infinity,
+          disabled: _amount <= 0,
+          onTap: () => _handleAmountNext(usePin: false),
+        ),
+        const SizedBox(height: 8),
+        Btn.text(
+          'Pay with PIN',
+          width: double.infinity,
+          disabled: _amount <= 0,
+          onTap: () => _handleAmountNext(usePin: true),
+        ),
+        const SizedBox(height: 8),
+        Btn.text(
+          'Cancel',
+          variant: BtnVariant.glass,
+          width: double.infinity,
+          onTap: _closeFlow,
         ),
       ],
     );
@@ -624,15 +647,19 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              'Card PIN${_amount >= highThreshold ? ' · Step 1 of 2' : ''}',
-              style: T.text(13, color: T.white(.60)),
+            Expanded(
+              child: Text(
+                'Enter 6-digit PIN${_amount >= highThreshold ? ' · Step 1 of 2' : ''}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: T.text(13, color: T.white(.60)),
+              ),
             ),
             if (_pinRetriesLeft >= 0)
               Badge2(
                 _pinRetriesLeft == 0 ? 'LOCKED' : '$_pinRetriesLeft TRIES LEFT',
-                color: _pinRetriesLeft <= 1 ? T.red400 : T.cyan400,
-                textColor: _pinRetriesLeft <= 1 ? T.red300 : T.cyan200,
+                color: _pinRetriesLeft <= 1 ? T.red400 : T.teal,
+                textColor: _pinRetriesLeft <= 1 ? T.red300 : Colors.white,
               ),
           ],
         ),
@@ -649,22 +676,18 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
         Numpad(
           value: _pinStr,
           max: 6,
-          onChanged: (v) => setState(() => _pinStr = v),
+          onChanged: (v) {
+            setState(() {
+              _pinStr = v;
+              if (_errorMsg.isNotEmpty) _errorMsg = '';
+            });
+            if (v.length == 6 && _pinRetriesLeft != 0) {
+              _handlePinNext();
+            }
+          },
         ),
-        const SizedBox(height: 14),
-        Row(
-          children: [
-            Btn.text('Back', variant: BtnVariant.glass, onTap: _reset),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Btn.text(
-                'Confirm PIN',
-                disabled: _pinStr.length < 4 || _pinRetriesLeft == 0,
-                onTap: _handlePinNext,
-              ),
-            ),
-          ],
-        ),
+        const SizedBox(height: 12),
+        Btn.text('Back', variant: BtnVariant.glass, onTap: _reset),
       ],
     );
   }
@@ -740,7 +763,7 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
                             color: i < _apduIdx
                                 ? T.emerald400
                                 : i == _apduIdx
-                                    ? T.cyan400
+                                    ? T.teal
                                     : T.white(.35),
                           ),
                         ),

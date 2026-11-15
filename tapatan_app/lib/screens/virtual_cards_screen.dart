@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:ui';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -90,38 +90,66 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
   bool _drawerOpen = true;
   bool _syncing = false;
   String _syncStatus = '';
-  int _tokenTick = 0;
+  final ValueNotifier<int> _tokenTick = ValueNotifier<int>(0);
   int _sigCounter = 42;
   int _pulseCount = 0;
+  int _swipeDir = 0;
+  int _revealSecs = 0;
+  Timer? _revealTimer;
   final Map<String, bool> _frozen = {};
   Map<String, _CardMeta> _meta = {};
   int _lastCardCount = -1;
 
   Timer? _tokenTimer;
-  late final AnimationController _pulseCtrl = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1400),
-  );
-  late final AnimationController _xrayTraceCtrl = AnimationController(
-    vsync: this,
-    duration: const Duration(seconds: 2),
-  )..repeat();
+  late final AnimationController _pulseCtrl;
+  late final AnimationController _xrayTraceCtrl;
 
   @override
   void initState() {
     super.initState();
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    _xrayTraceCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    );
     _loadMeta();
     _tokenTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (mounted) setState(() => _tokenTick++);
+      if (mounted) _tokenTick.value++;
     });
   }
 
   @override
   void dispose() {
     _tokenTimer?.cancel();
+    _revealTimer?.cancel();
+    _tokenTick.dispose();
     _pulseCtrl.dispose();
     _xrayTraceCtrl.dispose();
     super.dispose();
+  }
+
+  void _toggleRevealCardInfo() {
+    _revealTimer?.cancel();
+    if (_revealSecs > 0) {
+      setState(() => _revealSecs = 0);
+      return;
+    }
+    setState(() => _revealSecs = 10);
+    _revealTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      if (_revealSecs <= 1) {
+        t.cancel();
+        setState(() => _revealSecs = 0);
+      } else {
+        setState(() => _revealSecs--);
+      }
+    });
   }
 
   Future<void> _loadMeta() async {
@@ -273,12 +301,24 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
     return list;
   }
 
+  void _setXray(bool next) {
+    if (next) {
+      _xrayTraceCtrl.repeat();
+    } else {
+      _xrayTraceCtrl.stop();
+    }
+  }
+
   void _stepCard(int delta, int count) {
     if (count <= 1) return;
+    _setXray(false);
+    _revealTimer?.cancel();
     setState(() {
+      _swipeDir = delta >= 0 ? 1 : -1;
       _idx = (_idx + delta + count) % count;
       _flip = false;
       _xray = false;
+      _revealSecs = 0;
     });
   }
 
@@ -348,17 +388,15 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
   String _lifecycleLabel(String state) {
     switch (state) {
       case 'op_ready':
-        return 'PERSONALIZED · TPT4';
+        return 'PERSONALIZED · READY';
       case 'secured':
         return 'PIN_SET · SECURED';
-      case 'ENROLLED':
-        return 'PERSONALIZED / ENROLLED';
       case 'locked':
         return 'PIN_BLOCKED';
       case 'terminated':
         return 'TERMINATED';
       default:
-        return 'ENROLLED · READY';
+        return 'READY';
     }
   }
 
@@ -373,7 +411,7 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
       case 'terminated':
         return T.red400;
       default:
-        return T.cyan300;
+        return T.teal;
     }
   }
 
@@ -385,7 +423,9 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
     if (_lastCardCount != -1 && cards.length > _lastCardCount) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
+        _setXray(false);
         setState(() {
+          _swipeDir = 1;
           _idx = cards.length - 1;
           _flip = false;
           _xray = false;
@@ -474,7 +514,7 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                 clipBehavior: Clip.none,
                 alignment: Alignment.topCenter,
                 children: [
-                  // Fan deck behind [2, 1]
+                  // Fan deck behind [2, 1] (no Opacity saveLayer; crisp tint dim)
                   for (final offset in [2, 1])
                     if (cards.length > offset)
                       Builder(
@@ -482,7 +522,6 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                           final bgCard = cards[(safeIdx + offset) % cards.length];
                           final scale = 1 - offset * 0.07;
                           final dy = -offset * 20.0;
-                          final opacity = (0.75 - offset * 0.2).clamp(0.15, 0.85);
                           final m = Matrix4.identity()
                             ..setEntry(3, 2, 0.001)
                             ..rotateX(-18 * math.pi / 180)
@@ -490,16 +529,26 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                           return Positioned(
                             top: 34 + dy,
                             child: IgnorePointer(
-                              child: Opacity(
-                                opacity: opacity * 0.65,
+                              child: RepaintBoundary(
                                 child: Transform(
                                   alignment: Alignment.center,
                                   transform: m,
                                   child: SizedBox(
                                     width: 290,
-                                    child: ui_card.CardFace(
-                                      card: bgCard.ui,
-                                      holder: holder,
+                                    child: Container(
+                                      foregroundDecoration: BoxDecoration(
+                                        color: Color.fromRGBO(
+                                          11,
+                                          17,
+                                          30,
+                                          offset == 2 ? 0.58 : 0.34,
+                                        ),
+                                        borderRadius: BorderRadius.circular(T.rCard),
+                                      ),
+                                      child: ui_card.CardFace(
+                                        card: bgCard.ui,
+                                        holder: holder,
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -509,38 +558,17 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                         },
                       ),
 
-                  // Ambient cyan/indigo glow beneath card
-                  Positioned(
-                    bottom: 12,
-                    child: IgnorePointer(
-                      child: ImageFiltered(
-                        imageFilter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                        child: Container(
-                          width: 210,
-                          height: 24,
-                          decoration: const BoxDecoration(
-                            borderRadius: BorderRadius.all(Radius.circular(999)),
-                            gradient: RadialGradient(
-                              colors: [
-                                Color(0xAA06B6D4),
-                                Color(0x556366F1),
-                                Colors.transparent,
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-
                   // Foreground active 3D card (or X-Ray 3-layer stack)
                   if (_xray && current.ui.physical)
                     Positioned.fill(
                       child: GestureDetector(
-                        onDoubleTap: () => setState(() => _xray = false),
+                        onDoubleTap: () {
+                          _setXray(false);
+                          setState(() => _xray = false);
+                        },
                         child: Center(
                           child: SizedBox(
-                            width: 290,
+                            width: 264,
                             child: _XRayExplodedCard(
                               traceAnim: _xrayTraceCtrl,
                               pinRetriesLeft: user.pinRetriesLeft,
@@ -552,13 +580,21 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                     )
                   else
                     ui_card.Card3D(
-                      key: ValueKey('stage-${current.ui.id}'),
+                      key: ValueKey('stage-${current.ui.id}-$safeIdx'),
                       flipped: _flip,
-                      onFlip: () => setState(() {
-                        _xray = false;
-                        _flip = !_flip;
-                      }),
+                      gyro: true,
+                      enterFrom: _swipeDir == 0
+                          ? const Offset(0, 18)
+                          : Offset(_swipeDir * 24.0, -34.0),
+                      onFlip: () {
+                        _setXray(false);
+                        setState(() {
+                          _xray = false;
+                          _flip = !_flip;
+                        });
+                      },
                       onSwipe: (dir) => _stepCard(dir, cards.length),
+                      onSwipeHorizontal: (dir) => _stepCard(dir, cards.length),
                       front: (tx, ty) => ui_card.CardFace(
                         card: current.ui,
                         holder: holder,
@@ -577,7 +613,7 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                       ),
                     ),
 
-                  // Sync pulse wave overlay
+                  // Sync pulse wave overlay (alpha directly on border, no saveLayer)
                   if (_pulseCount > 0)
                     AnimatedBuilder(
                       animation: _pulseCtrl,
@@ -589,19 +625,16 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                         return Positioned(
                           top: 46,
                           child: IgnorePointer(
-                            child: Opacity(
-                              opacity: (1 - v) * 0.85,
-                              child: Transform.scale(
-                                scale: 0.55 + v * 0.85,
-                                child: Container(
-                                  width: 192,
-                                  height: 192,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: T.cyan300,
-                                      width: 2,
-                                    ),
+                            child: Transform.scale(
+                              scale: 0.55 + v * 0.85,
+                              child: Container(
+                                width: 192,
+                                height: 192,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: T.teal.withValues(alpha: (1 - v) * 0.85),
+                                    width: 2,
                                   ),
                                 ),
                               ),
@@ -620,18 +653,24 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
               children: [
                 for (var i = 0; i < cards.length; i++)
                   GestureDetector(
-                    onTap: () => setState(() {
-                      _idx = i;
-                      _flip = false;
-                      _xray = false;
-                    }),
+                    onTap: () {
+                      _setXray(false);
+                      _revealTimer?.cancel();
+                      setState(() {
+                        _swipeDir = i >= safeIdx ? 1 : -1;
+                        _idx = i;
+                        _flip = false;
+                        _xray = false;
+                        _revealSecs = 0;
+                      });
+                    },
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
                       margin: const EdgeInsets.symmetric(horizontal: 3),
                       height: 6,
                       width: i == safeIdx ? 20 : 6,
                       decoration: BoxDecoration(
-                        color: i == safeIdx ? T.cyan300 : T.white(.25),
+                        color: i == safeIdx ? T.teal : T.white(.25),
                         borderRadius: BorderRadius.circular(99),
                       ),
                     ),
@@ -650,10 +689,13 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                     icon: LucideIcons.rotateCw,
                     label: 'Flip 180°',
                     active: _flip,
-                    onTap: () => setState(() {
-                      _xray = false;
-                      _flip = !_flip;
-                    }),
+                    onTap: () {
+                      _setXray(false);
+                      setState(() {
+                        _xray = false;
+                        _flip = !_flip;
+                      });
+                    },
                   ),
                   _DockAction(
                     icon: LucideIcons.layers,
@@ -661,9 +703,11 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                     active: _xray,
                     onTap: () {
                       if (current.ui.physical) {
+                        final next = !_xray;
+                        _setXray(next);
                         setState(() {
                           _flip = false;
-                          _xray = !_xray;
+                          _xray = next;
                         });
                       } else {
                         showToast(
@@ -782,9 +826,24 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                                     const Icon(
                                       LucideIcons.copy,
                                       size: 14,
-                                      color: T.cyan300,
+                                      color: T.teal,
                                     ),
                                   ],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            _TelemetryRow(
+                              k: 'Card Details',
+                              v: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: _toggleRevealCardInfo,
+                                child: Text(
+                                  _revealSecs > 0
+                                      ? '${current.ui.num} · ${current.raw.expiry.isNotEmpty ? current.raw.expiry : "12/29"} · CVV ${current.raw.cvv.isNotEmpty ? current.raw.cvv : "882"} (${_revealSecs}s)'
+                                      : 'Tap to reveal',
+                                  textAlign: TextAlign.right,
+                                  style: T.mono(11.5, color: T.teal, w: T.w600),
                                 ),
                               ),
                             ),
@@ -804,13 +863,9 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                                                 i < user.pinRetriesLeft)
                                             ? (user.pinRetriesLeft == 0
                                                 ? T.red400
-                                                : T.cyan400)
+                                                : T.teal)
                                             : T.white(.12),
                                         borderRadius: BorderRadius.circular(99),
-                                        boxShadow: (user.pinRetriesLeft < 0 ||
-                                                i < user.pinRetriesLeft)
-                                            ? T.glow(T.cyan400, 8)
-                                            : null,
                                       ),
                                     ),
                                   const SizedBox(width: 4),
@@ -844,7 +899,7 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                                 child: Text(
                                   _syncStatus,
                                   textAlign: TextAlign.center,
-                                  style: T.text(11, color: T.cyan200),
+                                  style: T.text(11, color: Colors.white),
                                 ),
                               ),
                             ],
@@ -856,10 +911,10 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Icon(
+                                  const Icon(
                                     LucideIcons.nfc,
                                     size: 16,
-                                    color: _syncing ? T.cyan300 : Colors.white,
+                                    color: Colors.white,
                                   ),
                                   const SizedBox(width: 8),
                                   Text(
@@ -912,6 +967,23 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                         v: Text(_peso(current.limit), style: T.text(12.5, w: T.w600)),
                       ),
                     ],
+                    if (current.ui.kind != 'pass') ...[
+                      const SizedBox(height: 10),
+                      _TelemetryRow(
+                        k: 'Card Details',
+                        v: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _toggleRevealCardInfo,
+                          child: Text(
+                            _revealSecs > 0
+                                ? '${current.ui.num} · ${current.raw.expiry.isNotEmpty ? current.raw.expiry : "12/29"} · CVV ${current.raw.cvv.isNotEmpty ? current.raw.cvv : "428"} (${_revealSecs}s)'
+                                : 'Tap to reveal',
+                            textAlign: TextAlign.right,
+                            style: T.mono(11.5, color: T.teal, w: T.w600),
+                          ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 10),
                     _TelemetryRow(
                       k: 'Status',
@@ -920,7 +992,7 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                         style: T.text(
                           12.5,
                           w: T.w600,
-                          color: isFrozen ? T.cyan200 : T.emerald300,
+                          color: isFrozen ? T.teal : T.emerald300,
                         ),
                       ),
                     ),
@@ -1023,13 +1095,11 @@ class _RoundDockBtn extends StatelessWidget {
         height: 36,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          gradient: primary ? T.btnLiquidGradient : null,
-          color: primary ? null : T.glassPillFill,
+          color: primary ? T.teal : T.glassPillFill,
           border: Border.all(
-            color: primary ? T.white(.4) : T.glassPillBorder,
+            color: primary ? T.teal : T.glassPillBorder,
             width: .5,
           ),
-          boxShadow: primary ? T.btnShadow : null,
         ),
         child: Icon(icon, size: 16, color: Colors.white),
       ),
@@ -1059,11 +1129,8 @@ class _DockAction extends StatelessWidget {
           duration: const Duration(milliseconds: 160),
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
-            color: active ? T.op(T.cyan400, .25) : Colors.transparent,
+            color: active ? T.teal : Colors.transparent,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: active ? T.op(T.cyan300, .4) : Colors.transparent,
-            ),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1071,7 +1138,7 @@ class _DockAction extends StatelessWidget {
               Icon(
                 icon,
                 size: 18,
-                color: active ? T.cyan200 : T.white(.75),
+                color: active ? Colors.white : T.white(.75),
               ),
               const SizedBox(height: 4),
               Text(
@@ -1081,7 +1148,7 @@ class _DockAction extends StatelessWidget {
                 style: T.text(
                   10.5,
                   w: T.w600,
-                  color: active ? T.cyan200 : T.white(.75),
+                  color: active ? Colors.white : T.white(.75),
                 ),
               ),
             ],
@@ -1115,7 +1182,7 @@ class _TelemetryRow extends StatelessWidget {
 class _CardBackFace extends StatefulWidget {
   final _ResolvedCard resolved;
   final String uid;
-  final int tokenTick;
+  final ValueListenable<int> tokenTick;
   final VoidCallback onCopyUid;
 
   const _CardBackFace({
@@ -1132,6 +1199,8 @@ class _CardBackFace extends StatefulWidget {
 class _CardBackFaceState extends State<_CardBackFace> {
   int _cvvSecs = 0;
   Timer? _cvvTimer;
+  DateTime _lastToggle = DateTime.fromMillisecondsSinceEpoch(0);
+  Offset _tapDown = Offset.zero;
 
   @override
   void dispose() {
@@ -1140,7 +1209,14 @@ class _CardBackFaceState extends State<_CardBackFace> {
   }
 
   void _revealCvv() {
+    final now = DateTime.now();
+    if (now.difference(_lastToggle).inMilliseconds < 180) return;
+    _lastToggle = now;
     _cvvTimer?.cancel();
+    if (_cvvSecs > 0) {
+      setState(() => _cvvSecs = 0);
+      return;
+    }
     setState(() => _cvvSecs = 10);
     _cvvTimer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted) {
@@ -1223,7 +1299,15 @@ class _CardBackFaceState extends State<_CardBackFace> {
                     Text(c.bank ?? c.name, style: T.mono(11)),
                     const SizedBox(height: 8),
                     Text('ACCOUNT NO.', style: T.mono(8, color: T.white(.5))),
-                    Text('•••• •••• $last4', style: T.mono(11)),
+                    GestureDetector(
+                      onTap: _revealCvv,
+                      child: Text(
+                        _cvvSecs > 0
+                            ? (widget.resolved.acct ?? widget.resolved.raw.cardNumber)
+                            : '•••• •••• $last4',
+                        style: T.mono(11),
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -1244,7 +1328,23 @@ class _CardBackFaceState extends State<_CardBackFace> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text('CVV', style: T.mono(8, color: T.white(.5))),
-                            Text('•••', style: T.mono(11)),
+                            Listener(
+                              behavior: HitTestBehavior.opaque,
+                              onPointerDown: (e) => _tapDown = e.position,
+                              onPointerUp: (e) {
+                                if ((e.position - _tapDown).distance < 24) {
+                                  _revealCvv();
+                                }
+                              },
+                              child: Text(
+                                _cvvSecs > 0
+                                    ? (widget.resolved.raw.cvv.isNotEmpty
+                                        ? widget.resolved.raw.cvv
+                                        : '428')
+                                    : '•••  tap',
+                                style: T.mono(11, color: T.teal),
+                              ),
+                            ),
                           ],
                         ),
                       ],
@@ -1252,7 +1352,7 @@ class _CardBackFaceState extends State<_CardBackFace> {
                     const Spacer(),
                     Text(
                       'Secured by JCOP4 · double-tap to flip',
-                      style: T.text(9, color: T.cyan200),
+                      style: T.text(9, color: T.white(.65)),
                     ),
                   ],
                 ),
@@ -1272,7 +1372,9 @@ class _CardBackFaceState extends State<_CardBackFace> {
     final cvvValue = widget.resolved.raw.cvv.isNotEmpty
         ? widget.resolved.raw.cvv
         : '428';
-    final macHex = (0x8F2A + widget.tokenTick).toRadixString(16).toUpperCase();
+    final expValue = widget.resolved.raw.expiry.isNotEmpty
+        ? widget.resolved.raw.expiry
+        : '12/29';
 
     return AspectRatio(
       aspectRatio: ui_card.kCardAspect,
@@ -1299,36 +1401,51 @@ class _CardBackFaceState extends State<_CardBackFace> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              GestureDetector(
-                                onTap: _revealCvv,
-                                child: Container(
-                                  height: 30,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: .92),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Text(
-                                        _cvvSecs > 0
-                                            ? 'CVV $cvvValue'
-                                            : 'Tap to reveal 10s',
-                                        style: T.mono(10.5, color: T.slate900),
-                                      ),
-                                      Text(
-                                        _cvvSecs > 0 ? '${_cvvSecs}s' : '•••',
-                                        style: T.mono(
-                                          10.5,
-                                          w: T.w700,
-                                          color: const Color(0xFF0E7490),
+                              Listener(
+                                behavior: HitTestBehavior.opaque,
+                                onPointerDown: (e) => _tapDown = e.position,
+                                onPointerUp: (e) {
+                                  if ((e.position - _tapDown).distance < 24) {
+                                    _revealCvv();
+                                  }
+                                },
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: _revealCvv,
+                                  child: Container(
+                                    height: 32,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withValues(alpha: .94),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            _cvvSecs > 0
+                                                ? 'EXP $expValue · CVV $cvvValue'
+                                                : 'Tap to reveal 10s',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: T.mono(10, color: T.slate900),
+                                          ),
                                         ),
-                                      ),
-                                    ],
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          _cvvSecs > 0 ? '${_cvvSecs}s' : '•••',
+                                          style: T.mono(
+                                            10.5,
+                                            w: T.w700,
+                                            color: T.teal,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
                               ),
@@ -1363,46 +1480,34 @@ class _CardBackFaceState extends State<_CardBackFace> {
                           ),
                         ),
                         const SizedBox(width: 10),
-                        Column(
-                          children: [
-                            Container(
-                              width: 68,
-                              height: 68,
-                              padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: GridView.builder(
-                                padding: EdgeInsets.zero,
-                                physics: const NeverScrollableScrollPhysics(),
-                                gridDelegate:
-                                    const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 7,
-                                  crossAxisSpacing: 1,
-                                  mainAxisSpacing: 1,
+                        ValueListenableBuilder<int>(
+                          valueListenable: widget.tokenTick,
+                          builder: (_, tick, _) {
+                            final macHex = (0x8F2A + tick)
+                                .toRadixString(16)
+                                .toUpperCase();
+                            return Column(
+                              children: [
+                                Container(
+                                  width: 68,
+                                  height: 68,
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: CustomPaint(
+                                    painter: _DynamicQrPainter(tick),
+                                  ),
                                 ),
-                                itemCount: 49,
-                                itemBuilder: (_, i) {
-                                  final on = ((i * 7 +
-                                              widget.tokenTick * 13 +
-                                              (i % 5) * widget.tokenTick) %
-                                          3) ==
-                                      0;
-                                  return DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      color: on ? T.slate900 : Colors.white,
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'TM•$macHex•9000',
-                              style: T.mono(7.5, color: T.cyan200),
-                            ),
-                          ],
+                                const SizedBox(height: 4),
+                                Text(
+                                  'TM•$macHex•9000',
+                                  style: T.mono(7.5, color: T.white(.65)),
+                                ),
+                              ],
+                            );
+                          },
                         ),
                       ],
                     ),
@@ -1423,6 +1528,32 @@ class _CardBackFaceState extends State<_CardBackFace> {
   }
 }
 
+class _DynamicQrPainter extends CustomPainter {
+  final int tick;
+  _DynamicQrPainter(this.tick);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = Paint()..color = T.slate900;
+    const cols = 7;
+    const gap = 1.0;
+    final cell = (size.width - gap * (cols - 1)) / cols;
+    for (var i = 0; i < 49; i++) {
+      final on = ((i * 7 + tick * 13 + (i % 5) * tick) % 3) == 0;
+      if (!on) continue;
+      final r = i ~/ cols;
+      final c = i % cols;
+      canvas.drawRect(
+        Rect.fromLTWH(c * (cell + gap), r * (cell + gap), cell, cell),
+        p,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DynamicQrPainter old) => old.tick != tick;
+}
+
 // ── 3-Layer X-Ray Hardware Inspection View ──────────────────────────────────
 
 class _XRayExplodedCard extends StatelessWidget {
@@ -1436,12 +1567,11 @@ class _XRayExplodedCard extends StatelessWidget {
     required this.armed,
   });
 
+  // Gentle symmetric tilt (rotateX only, no Z/Y skew) keeps true ID-1 card proportions and level left/right alignment.
   Widget _angledLayer(double dy, Widget child) {
     final m = Matrix4.identity()
-      ..setEntry(3, 2, 0.0014)
-      ..rotateX(52 * math.pi / 180)
-      ..rotateZ(-26 * math.pi / 180)
-      ..scaleByDouble(0.84, 0.84, 1.0, 1.0);
+      ..setEntry(3, 2, 0.001)
+      ..rotateX(0.46);
     return Transform.translate(
       offset: Offset(0, dy),
       child: Transform(
@@ -1462,22 +1592,21 @@ class _XRayExplodedCard extends StatelessWidget {
       children: [
         // Bottom Layer: Silicon Die (NXP J3R150 DIE)
         _angledLayer(
-          46,
+          34,
           Container(
             decoration: BoxDecoration(
               color: const Color(0xCC06141F),
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: T.op(T.cyan300, .5)),
+              border: Border.all(color: T.op(T.teal, .55)),
             ),
             alignment: Alignment.center,
             child: Container(
-              width: 118,
+              width: 122,
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: T.op(T.cyan400, .12),
+                color: T.op(T.teal, .16),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: T.cyan300),
-                boxShadow: T.glow(T.op(T.cyan400, .4), 24),
+                border: Border.all(color: T.teal),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1486,16 +1615,16 @@ class _XRayExplodedCard extends StatelessWidget {
                   Text('NXP J3R150 DIE', style: T.mono(9, w: T.w700)),
                   Text(
                     'TapatMFAApplet',
-                    style: T.mono(8, color: T.cyan200),
+                    style: T.mono(8, color: T.white(.75)),
                   ),
-                  Text('EEPROM ● OK', style: T.mono(8, color: T.cyan200)),
+                  Text('EEPROM ● OK', style: T.mono(8, color: T.white(.75))),
                   Text(
                     'PIN ${pinRetriesLeft < 0 ? 5 : pinRetriesLeft}/5 tries',
-                    style: T.mono(8, color: T.cyan200),
+                    style: T.mono(8, color: T.white(.75)),
                   ),
                   Text(
                     'TMAC tape: ${armed ? 'armed' : 'idle'}',
-                    style: T.mono(8, color: T.cyan200),
+                    style: T.mono(8, color: T.white(.75)),
                   ),
                 ],
               ),
@@ -1522,26 +1651,19 @@ class _XRayExplodedCard extends StatelessWidget {
           ),
         ),
 
-        // Top Layer: Polycarbonate + Hologram
+        // Top Layer: Flat Matte Polycarbonate Shell
         _angledLayer(
-          -46,
+          -34,
           Container(
             decoration: BoxDecoration(
+              color: const Color(0x22FFFFFF),
               borderRadius: BorderRadius.circular(18),
               border: Border.all(color: T.white(.35)),
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0x33FFFFFF),
-                  Color(0x1A67E8F9),
-                ],
-              ),
             ),
             padding: const EdgeInsets.all(12),
             alignment: Alignment.topLeft,
             child: Text(
-              'tap@tan · polycarbonate + hologram',
+              'tap@tan · polycarbonate shell',
               style: T.text(11, w: T.w800),
             ),
           ),
@@ -1578,7 +1700,7 @@ class _AntennaPainter extends CustomPainter {
       );
     }
 
-    // Traveling cyan APDU packet pulse around outermost loop
+    // Traveling teal APDU packet pulse around outermost loop
     final outer = Path()
       ..addRRect(
         RRect.fromRectAndRadius(
@@ -1591,7 +1713,7 @@ class _AntennaPainter extends CustomPainter {
       final seg = metric.length * 0.14;
       final end = start + seg;
       final pulsePaint = Paint()
-        ..color = T.cyan400
+        ..color = T.teal
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2.4
         ..strokeCap = StrokeCap.round;
@@ -1762,9 +1884,9 @@ class _AddCardStudioState extends State<_AddCardStudio> {
                 height: 48,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: T.op(T.cyan400, .15),
+                  color: T.op(T.teal, .18),
                 ),
-                child: const Icon(LucideIcons.shieldCheck, color: T.cyan300, size: 24),
+                child: const Icon(LucideIcons.shieldCheck, color: T.teal, size: 24),
               ),
               const SizedBox(height: 10),
               Text('Add this card?', style: T.text(17, w: T.w800)),
@@ -1818,7 +1940,7 @@ class _AddCardStudioState extends State<_AddCardStudio> {
         : _isPass
             ? 'cyber'
             : _material;
-    final matColors = ui_card.kMaterials[cardMat]?.base ?? T.cyan600;
+    final matColors = ui_card.kMaterials[cardMat]?.base ?? T.teal;
 
     final newCard = CardData(
       id: cardId,
@@ -1836,7 +1958,7 @@ class _AddCardStudioState extends State<_AddCardStudio> {
           : _kind == 'bank'
               ? 'bank'
               : (_network.contains('Master') ? 'mastercard' : 'visa'),
-      colors: [matColors, T.cyan600],
+      colors: [matColors, T.teal],
       balance: 0,
     );
 
@@ -1875,7 +1997,7 @@ class _AddCardStudioState extends State<_AddCardStudio> {
                     padding: const EdgeInsets.only(right: 10),
                     child: Text(
                       '‹ Back',
-                      style: T.text(12, w: T.w700, color: T.cyan300),
+                      style: T.text(12, w: T.w700, color: T.teal),
                     ),
                   ),
                 ),
@@ -1886,7 +2008,7 @@ class _AddCardStudioState extends State<_AddCardStudio> {
                     height: 4,
                     margin: EdgeInsets.only(right: n == 2 ? 0 : 6),
                     decoration: BoxDecoration(
-                      color: n <= _step ? T.cyan300 : T.white(.15),
+                      color: n <= _step ? T.teal : T.white(.15),
                       borderRadius: BorderRadius.circular(99),
                     ),
                   ),
@@ -1946,10 +2068,10 @@ class _AddCardStudioState extends State<_AddCardStudio> {
                         width: 48,
                         height: 48,
                         decoration: BoxDecoration(
-                          color: T.op(T.cyan400, .15),
+                          color: T.op(T.teal, .18),
                           borderRadius: BorderRadius.circular(16),
                         ),
-                        child: Icon(item.$2, color: T.cyan300, size: 22),
+                        child: Icon(item.$2, color: T.teal, size: 22),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -2039,7 +2161,7 @@ class _AddCardStudioState extends State<_AddCardStudio> {
                 padding: const EdgeInsets.only(bottom: 12),
                 child: Text(
                   'Scan from camera (demo fill)',
-                  style: T.text(12, w: T.w600, color: T.cyan300),
+                  style: T.text(12, w: T.w600, color: T.teal),
                 ),
               ),
             ),
@@ -2173,7 +2295,7 @@ class _AddCardStudioState extends State<_AddCardStudio> {
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(14),
                             border: Border.all(
-                              color: _material == key ? T.cyan300 : T.white(.1),
+                              color: _material == key ? T.teal : T.white(.1),
                             ),
                           ),
                           child: Column(
@@ -2216,14 +2338,10 @@ class _AddCardStudioState extends State<_AddCardStudio> {
                           height: 40,
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            color: _network == net
-                                ? T.op(T.cyan400, .2)
-                                : Colors.transparent,
+                            color: _network == net ? T.teal : Colors.transparent,
                             borderRadius: BorderRadius.circular(99),
                             border: Border.all(
-                              color: _network == net
-                                  ? T.op(T.cyan300, .6)
-                                  : T.white(.1),
+                              color: _network == net ? T.teal : T.white(.1),
                             ),
                           ),
                           child: Text(
@@ -2231,7 +2349,7 @@ class _AddCardStudioState extends State<_AddCardStudio> {
                             style: T.text(
                               12,
                               w: T.w600,
-                              color: _network == net ? T.cyan200 : T.white(.6),
+                              color: _network == net ? Colors.white : T.white(.6),
                             ),
                           ),
                         ),
@@ -2255,7 +2373,7 @@ class _AddCardStudioState extends State<_AddCardStudio> {
               min: 500,
               max: 20000,
               divisions: 39,
-              activeColor: T.cyan400,
+              activeColor: T.teal,
               inactiveColor: T.white(.15),
               onChanged: (v) => setState(() => _limit = v),
             ),
@@ -2339,7 +2457,7 @@ class _AddCardStudioState extends State<_AddCardStudio> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(LucideIcons.lock, size: 14, color: T.cyan300),
+              const Icon(LucideIcons.lock, size: 14, color: T.teal),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -2369,7 +2487,6 @@ class _AddCardStudioState extends State<_AddCardStudio> {
                 shape: BoxShape.circle,
                 color: T.op(T.emerald400, .2),
                 border: Border.all(color: T.op(T.emerald300, .5)),
-                boxShadow: T.glow(T.op(T.emerald, .4), 36),
               ),
               child: const Icon(
                 LucideIcons.check,

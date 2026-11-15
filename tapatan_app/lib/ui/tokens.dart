@@ -36,7 +36,16 @@ class T {
   static Color blk([double o = 1]) => Color.fromRGBO(0, 0, 0, o);
   static Color op(Color c, double o) => c.withValues(alpha: o);
 
-  // ── Glass fills
+  // ── Brand teal (solid, used for every button) & flat surfaces
+  static const teal = Color(0xFF0D9488);
+  static const tealPressed = Color(0xFF0F766E);
+  static const surface = Color(0xFF121A2A);
+  static const surfaceStrong = Color(0xFF172033);
+  static const surfaceTint = Color(0xFF12202B);
+  static const surfacePill = Color(0xFF1B2538);
+  static final surfaceBorder = white(.08);
+
+  // ── Glass fills (legacy names, kept for compatibility)
   static final glassTop = white(.14);
   static final glassBottom = white(.04);
   static final glassBorder = white(.22);
@@ -61,12 +70,9 @@ class T {
     end: Alignment.bottomRight,
     colors: [Color.fromRGBO(6, 182, 212, .26), Color.fromRGBO(99, 102, 241, .16)],
   );
-  static const btnLiquidGradient = LinearGradient(
-    begin: Alignment.topCenter,
-    end: Alignment.bottomCenter,
-    stops: [0, .55, 1],
-    colors: [Color.fromRGBO(103, 232, 249, .95), Color.fromRGBO(6, 182, 212, .92), Color.fromRGBO(16, 185, 129, .92)],
-  );
+  // Buttons are solid teal now; kept as a flat 2-stop "gradient" of one color
+  // so legacy call sites render solid.
+  static const btnLiquidGradient = LinearGradient(colors: [teal, teal]);
 
   // ── Radii
   static const rGlass = 26.0;
@@ -86,26 +92,29 @@ class T {
   static const btnH = 48.0, fieldH = 44.0, keyH = 56.0;
 
   // ── Shadows
-  static final glassShadow = <BoxShadow>[
-    BoxShadow(color: blk(.45), blurRadius: 32, spreadRadius: -8, offset: const Offset(0, 12)),
-  ];
-  static final strongShadow = <BoxShadow>[
-    BoxShadow(color: blk(.5), blurRadius: 30, offset: const Offset(0, 10)),
-  ];
-  static final tintShadow = <BoxShadow>[
-    BoxShadow(color: sky.withValues(alpha: .35), blurRadius: 28, spreadRadius: -8, offset: const Offset(0, 10)),
-  ];
-  static final btnShadow = <BoxShadow>[
-    BoxShadow(color: cyan500.withValues(alpha: .6), blurRadius: 24, spreadRadius: -6, offset: const Offset(0, 10)),
-  ];
-  static final lensShadow = <BoxShadow>[
-    BoxShadow(color: cyan500.withValues(alpha: .35), blurRadius: 14, offset: const Offset(0, 4)),
-  ];
-  static List<BoxShadow> glow(Color c, [double blur = 12]) => [BoxShadow(color: c, blurRadius: blur)];
+  // Glow / highlight effects are removed app-wide: all shadow tokens are empty.
+  static final glassShadow = <BoxShadow>[];
+  static final strongShadow = <BoxShadow>[];
+  static final tintShadow = <BoxShadow>[];
+  static final btnShadow = <BoxShadow>[];
+  static final lensShadow = <BoxShadow>[];
+  static List<BoxShadow> glow(Color c, [double blur = 12]) => const <BoxShadow>[];
 
-  // ── Typography (Plus Jakarta Sans / JetBrains Mono, letter-spacing -0.01em)
+  // ── Typography (Plus Jakarta Sans / JetBrains Mono, cached family to avoid per-build GoogleFonts overhead)
+  static final String? _sansFamily = _resolveFontFamily(GoogleFonts.plusJakartaSans);
+  static final String? _monoFamily = _resolveFontFamily(GoogleFonts.jetBrainsMono);
+
+  static String? _resolveFontFamily(TextStyle Function() fn) {
+    try {
+      return fn().fontFamily;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static TextStyle text(double size, {FontWeight w = FontWeight.w400, Color? color, double? height, double? ls, List<Shadow>? shadows}) =>
-      GoogleFonts.plusJakartaSans(
+      TextStyle(
+        fontFamily: _sansFamily,
         fontSize: size,
         fontWeight: w,
         color: color ?? Colors.white,
@@ -116,7 +125,14 @@ class T {
 
   /// `font-mono-ui` (letter-spacing 0 unless [ls] given; Tailwind tracking-widest = .1em → ls: size*.1)
   static TextStyle mono(double size, {FontWeight w = FontWeight.w400, Color? color, double? height, double ls = 0}) =>
-      GoogleFonts.jetBrainsMono(fontSize: size, fontWeight: w, color: color ?? Colors.white, height: height, letterSpacing: ls);
+      TextStyle(
+        fontFamily: _monoFamily,
+        fontSize: size,
+        fontWeight: w,
+        color: color ?? Colors.white,
+        height: height,
+        letterSpacing: ls,
+      );
 
   static const w500 = FontWeight.w500, w600 = FontWeight.w600, w700 = FontWeight.w700, w800 = FontWeight.w800;
 

@@ -35,7 +35,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
   bool _nfcTapping = false;
   bool _nfcCompleted = false;
   bool _isNavigating = false;
-  bool _showPass = false;
+  bool _pinStep = false;
   String _cardStep = 'idle'; // idle | scanning | success | error
 
   // Real KYC Step 2 state
@@ -56,19 +56,45 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
   final TextEditingController _pinController = TextEditingController();
   final TextEditingController _confirmPinController = TextEditingController();
 
-  late final AnimationController _pulseController = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 2400),
-  )..repeat();
+  late final AnimationController _pulseController;
+  late final AnimationController _heroFloatController;
 
-  late final AnimationController _heroFloatController = AnimationController(
-    vsync: this,
-    duration: const Duration(seconds: 7),
-  )..repeat(reverse: true);
+  bool get _wantsHeroFloat => _view == AuthView.landing && _landingPage < 2;
+  bool get _wantsPulse =>
+      (_view == AuthView.landing && _landingPage == 1) ||
+      (_view == AuthView.login && _nfcTapping) ||
+      (_view == AuthView.registerCard && _cardStep == 'scanning');
+
+  void _syncAnimations() {
+    if (!mounted) return;
+    if (_wantsHeroFloat) {
+      if (!_heroFloatController.isAnimating) {
+        _heroFloatController.repeat(reverse: true);
+      }
+    } else if (_heroFloatController.isAnimating) {
+      _heroFloatController.stop();
+    }
+    if (_wantsPulse) {
+      if (!_pulseController.isAnimating) {
+        _pulseController.repeat();
+      }
+    } else if (_pulseController.isAnimating) {
+      _pulseController.stop();
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    );
+    _heroFloatController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 7),
+    );
+    _syncAnimations();
     _initializeAuthState();
   }
 
@@ -99,25 +125,16 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
 
   Future<void> _initializeAuthState() async {
     await AccountBackendService.initialize();
-    final active = await AccountBackendService.getActiveSessionAccount();
-    if (active != null) {
-      await ref
-          .read(userProvider.notifier)
-          .applyAuthenticatedAccount(active, armed: false);
-      if (mounted) {
-        _navigateToMain();
-      }
-      return;
-    }
-
     await _refreshAccountsAndConfig();
     final lastEmail = await AccountBackendService.getLastSignedInEmail();
+    final active = await AccountBackendService.getActiveSessionAccount();
     if (!mounted) return;
-    if (lastEmail.isNotEmpty) {
-      _emailController.text = lastEmail;
+    final email = lastEmail.isNotEmpty ? lastEmail : (active?.email ?? '');
+    if (email.isNotEmpty) {
+      _emailController.text = email;
     }
-    if (_savedAccounts.isNotEmpty) {
-      // Returning users who explicitly signed out jump to Sign In for quick re-entry
+    // Returning users always land directly on Sign In when reopened
+    if (_savedAccounts.isNotEmpty || email.isNotEmpty) {
       _switchView(AuthView.login);
     }
   }
@@ -132,6 +149,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
       _nfcTapping = false;
       _retrySecondsLeft = 0;
       _nfcErrorNote = null;
+      _pinStep = false;
     });
 
     if (view == AuthView.login && !_nfcCompleted && !_isNavigating) {
@@ -206,9 +224,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
       return;
     }
     if (_accountConfig.requirePinOnEmailLogin &&
-        pinInput.length < _accountConfig.pinMinLength) {
+        pinInput.length != 6) {
       _showSnack(
-        'Please enter your ${_accountConfig.pinMinLength} to ${_accountConfig.pinMaxLength}-digit PIN.',
+        'Please enter your 6-digit PIN.',
         isError: true,
       );
       return;
@@ -370,10 +388,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
       );
       return;
     }
-    if (pin.length < _accountConfig.pinMinLength ||
-        pin.length > _accountConfig.pinMaxLength) {
+    if (pin.length != 6) {
       _showSnack(
-        'PIN must be ${_accountConfig.pinMinLength} to ${_accountConfig.pinMaxLength} digits.',
+        'PIN must be exactly 6 digits.',
         isError: true,
       );
       return;
@@ -574,7 +591,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
   Widget _buildWordmark({double size = 20}) => Text.rich(
         TextSpan(children: [
           const TextSpan(text: 'tap'),
-          TextSpan(text: '@', style: TextStyle(color: T.cyan300)),
+          const TextSpan(text: '@', style: TextStyle(color: T.teal)),
           const TextSpan(text: 'tan'),
         ]),
         style: T.text(size, w: T.w800),
@@ -584,10 +601,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
 
   static const _landingPages = [
     (
-      keyLabel: 'HARDWARE KEY',
-      title: 'Your card is your password.',
-      desc:
-          'A JCOP4 NFC key holds your credentials in a secure chip. Phishing can\'t copy what never leaves the hardware.',
+      keyLabel: '',
+      title: 'Your card is your password. Your wallet is your card.',
+      desc: '',
     ),
     (
       keyLabel: 'TAP TO PAY',
@@ -598,8 +614,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     (
       keyLabel: 'SECOND LAYER',
       title: 'An AI that watches your back.',
-      desc:
-          'A CNN-LSTM engine scores every session for phishing and anomalies, so threats are caught before money moves.',
+      desc: 'Every session is scored for phishing before money moves.',
     ),
   ];
 
@@ -625,7 +640,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                             horizontal: 10, vertical: 6),
                         child: Text(
                           'Sign In (${_savedAccounts.length})',
-                          style: T.text(11.5, w: T.w700, color: T.cyan300),
+                          style: T.text(11.5, w: T.w700, color: Colors.white),
                         ),
                       ),
                     ),
@@ -691,8 +706,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
           ),
 
           // Copy block
-          SizedBox(
-            height: 158,
+          ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 158),
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 280),
               child: Column(
@@ -700,20 +715,24 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    page.keyLabel,
-                    style: T.mono(11, color: T.cyan300, ls: 2.0),
-                  ),
-                  const SizedBox(height: 8),
+                  if (page.keyLabel.isNotEmpty) ...[
+                    Text(
+                      page.keyLabel,
+                      style: T.mono(11, color: T.teal, ls: 2.0),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   Text(
                     page.title,
                     style: T.text(31, w: T.w800, height: 1.08, ls: -0.9),
                   ),
-                  const SizedBox(height: 10),
-                  Text(
-                    page.desc,
-                    style: T.text(14, color: T.white(.60), height: 1.5),
-                  ),
+                  if (page.desc.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      page.desc,
+                      style: T.text(14, color: T.white(.60), height: 1.5),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -734,7 +753,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                     width: active ? 24 : 6,
                     height: 6,
                     decoration: BoxDecoration(
-                      color: active ? T.cyan300 : T.white(.25),
+                      color: active ? T.teal : T.white(.25),
                       borderRadius: BorderRadius.circular(99),
                     ),
                   ),
@@ -813,7 +832,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                 width: 280,
                 child: ui_card.CardFace(
                   card: heroCard,
-                  holder: 'JCOP4 HARDWARE KEY',
+                  holder: '',
                   tiltX: 0.3,
                   tiltY: 0.0,
                 ),
@@ -849,7 +868,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                         height: 220,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          border: Border.all(color: T.cyan300, width: 1.5),
+                          border: Border.all(color: T.teal, width: 1.5),
                         ),
                       ),
                     ),
@@ -879,16 +898,30 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                 ),
               ),
             ),
+            // NFC Logo behind the card
+            Transform.translate(
+              offset: const Offset(-10, -14),
+              child: Container(
+                width: 52,
+                height: 52,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: T.teal,
+                ),
+                child: const Icon(LucideIcons.nfc, color: Colors.white, size: 26),
+              ),
+            ),
+            // Tapatan card (smaller and placed in front of the NFC logo)
             AnimatedBuilder(
               animation: _heroFloatController,
               builder: (_, _) {
                 final t = (_heroFloatController.value - 0.5).abs() * 2;
                 return Transform.translate(
-                  offset: Offset(26 + 16 * (1 - t), 22 - 10 * t),
+                  offset: Offset(18 + 12 * (1 - t), 16 - 8 * t),
                   child: Transform.rotate(
-                    angle: 12 * math.pi / 180,
+                    angle: 10 * math.pi / 180,
                     child: const SizedBox(
-                      width: 132,
+                      width: 118,
                       child: ui_card.CardFace(
                         card: heroCard,
                         holder: '',
@@ -899,19 +932,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                 );
               },
             ),
-            Transform.translate(
-              offset: const Offset(-28, -22),
-              child: Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: T.btnLiquidGradient,
-                  boxShadow: T.btnShadow,
-                ),
-                child: const Icon(LucideIcons.nfc, color: Colors.white, size: 28),
-              ),
-            ),
           ],
         ),
       );
@@ -920,28 +940,14 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     // Slide 2: CNN-LSTM Threat Engine
     const bars = [0.40, 0.62, 0.50, 0.80, 0.66, 0.92, 0.74, 0.96];
     return SizedBox(
-      width: 264,
+      width: 280,
       height: 256,
       child: Stack(
         alignment: Alignment.center,
         children: [
-          Container(
-            width: 220,
-            height: 220,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: RadialGradient(
-                colors: [
-                  T.op(T.cyan400, .25),
-                  T.op(T.emerald400, .15),
-                  Colors.transparent,
-                ],
-              ),
-            ),
-          ),
           Glass(
             radius: 36,
-            width: 244,
+            width: 264,
             padding: const EdgeInsets.all(20),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -950,11 +956,15 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                 Row(
                   children: [
                     const Icon(LucideIcons.shieldCheck,
-                        size: 16, color: T.emerald300),
+                        size: 16, color: T.teal),
                     const SizedBox(width: 6),
-                    Text(
-                      'CNN-LSTM THREAT ENGINE',
-                      style: T.text(10.5, w: T.w700, color: T.emerald300),
+                    Expanded(
+                      child: Text(
+                        'CNN-LSTM THREAT ENGINE',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: T.text(10.5, w: T.w700, color: T.teal),
+                      ),
                     ),
                   ],
                 ),
@@ -964,7 +974,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                     const TextSpan(text: '94.7'),
                     TextSpan(
                       text: '%',
-                      style: T.text(24, w: T.w800, color: T.cyan300),
+                      style: T.text(24, w: T.w800, color: T.teal),
                     ),
                   ]),
                   style: T.text(44, w: T.w800, height: 1),
@@ -992,11 +1002,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                                 height: 40 * v,
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(3),
-                                  gradient: const LinearGradient(
-                                    begin: Alignment.bottomCenter,
-                                    end: Alignment.topCenter,
-                                    colors: [T.cyan500, T.emerald300],
-                                  ),
+                                  color: T.teal,
                                 ),
                               ),
                             ),
@@ -1038,7 +1044,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     const Icon(LucideIcons.settings,
-                        color: T.cyan300, size: 15),
+                        color: T.teal, size: 15),
                     const SizedBox(width: 6),
                     Text(
                       'Account Rules',
@@ -1056,14 +1062,13 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
             Container(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(16),
-                boxShadow: T.glow(T.cyan500, 26),
               ),
               child: const Glass(
                 radius: 16,
                 width: 48,
                 height: 48,
                 child: Icon(LucideIcons.shieldCheck,
-                    color: T.cyan300, size: 24),
+                    color: T.teal, size: 24),
               ),
             ),
             const SizedBox(width: 12),
@@ -1153,6 +1158,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
   // ── Login View (AuthScreen.tsx 'in' 1:1) ──────────────────────────────────
 
   Widget _buildLoginView() {
+    if (_pinStep) return _buildPinStep();
     return ListView(
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 36),
@@ -1194,7 +1200,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                                     decoration: BoxDecoration(
                                       shape: BoxShape.circle,
                                       border: Border.all(
-                                          color: T.cyan300, width: 1.5),
+                                          color: T.teal, width: 1.5),
                                     ),
                                   ),
                                 ),
@@ -1206,8 +1212,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                         height: 64,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          gradient: T.btnLiquidGradient,
-                          boxShadow: T.btnShadow,
+                          color: T.teal,
                         ),
                         child: _nfcTapping
                             ? const Padding(
@@ -1229,14 +1234,13 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                       ? 'Hold Bound Tapat Card Now...'
                       : (_retrySecondsLeft > 0
                           ? 'Re-scanning in ${_retrySecondsLeft}s (Tap to Retry)'
-                          : 'Tap JCOP4 Card to Sign In'),
+                          : 'Tap to sign in'),
                   style: T.text(16, w: T.w800),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  _nfcErrorNote ??
-                      'One tap · hardware-verified · single-action locked',
+                  _nfcErrorNote ?? 'One tap · hardware-verified',
                   style: T.text(
                     11.5,
                     color: _nfcErrorNote != null ? T.amber300 : T.white(.55),
@@ -1281,6 +1285,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                     setState(() {
                       _emailController.text = acc.email;
                       _pinController.clear();
+                      _pinStep = true;
                     });
                   },
                   child: ConstrainedBox(
@@ -1288,12 +1293,10 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                     child: Container(
                       padding: const EdgeInsets.fromLTRB(6, 6, 14, 6),
                       decoration: BoxDecoration(
-                        color: isSelected
-                            ? T.op(T.cyan400, .18)
-                            : T.glassPillFill,
+                        color: isSelected ? T.surfaceTint : T.surfacePill,
                         borderRadius: BorderRadius.circular(18),
                         border: Border.all(
-                          color: isSelected ? T.cyan300 : T.glassPillBorder,
+                          color: isSelected ? T.teal : T.surfaceBorder,
                         ),
                       ),
                       child: Row(
@@ -1302,9 +1305,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                           Container(
                             width: 34,
                             height: 34,
-                            decoration: BoxDecoration(
+                            decoration: const BoxDecoration(
                               shape: BoxShape.circle,
-                              gradient: T.btnLiquidGradient,
+                              color: T.teal,
                             ),
                             alignment: Alignment.center,
                             child: Text(
@@ -1354,35 +1357,18 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
             setState(() {});
           },
         ),
-        Field(
-          label:
-              'PIN (${_accountConfig.pinMinLength}–${_accountConfig.pinMaxLength} digits)',
-          mono: true,
-          controller: _pinController,
-          hint: '••••',
-          obscure: !_showPass,
-          keyboardType: TextInputType.number,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          maxLength: _accountConfig.pinMaxLength,
-          onChanged: (_) {
-            _pauseBackgroundNfcForManualTyping();
-            setState(() {});
-          },
-          suffix: GestureDetector(
-            onTap: () => setState(() => _showPass = !_showPass),
-            child: Icon(
-              _showPass ? LucideIcons.eyeOff : LucideIcons.eye,
-              size: 18,
-              color: T.white(.50),
-            ),
-          ),
-        ),
         const SizedBox(height: 4),
         Btn.text(
-          _isLoading ? 'Signing In...' : 'Sign In with Email & PIN',
+          'Continue',
           width: double.infinity,
-          disabled: _isLoading || _emailController.text.trim().isEmpty,
-          onTap: _handleLogin,
+          disabled: _emailController.text.trim().isEmpty,
+          onTap: () {
+            _pauseBackgroundNfcForManualTyping();
+            setState(() {
+              _pinController.clear();
+              _pinStep = true;
+            });
+          },
         ),
         const SizedBox(height: 14),
         Center(
@@ -1398,6 +1384,90 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
               _switchView(AuthView.signup, resetSignupStep: 1);
             },
           ),
+        ),
+      ],
+    );
+  }
+
+  // ── PIN Step (6 digits, auto-submits on the 6th digit) ────────────────────
+
+  bool _pinSubmitting = false;
+
+  Future<void> _onPinChanged(String v) async {
+    if (_pinSubmitting || _isLoading || _isNavigating) return;
+    setState(() => _pinController.text = v);
+    if (v.length != 6) return;
+    _pinSubmitting = true;
+    try {
+      await _handleLogin();
+    } finally {
+      _pinSubmitting = false;
+      if (mounted && !_isNavigating) {
+        setState(() => _pinController.clear());
+      }
+    }
+  }
+
+  Widget _buildPinStep() {
+    final email = AccountBackendService.normalizeEmail(_emailController.text);
+    String who = email;
+    for (final a in _savedAccounts) {
+      if (a.email == email && a.name.trim().isNotEmpty) who = a.name;
+    }
+    return ListView(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 36),
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: GlassIconBtn(
+            icon: LucideIcons.chevronLeft,
+            size: 40,
+            iconSize: 20,
+            onTap: () => setState(() {
+              _pinStep = false;
+              _pinController.clear();
+            }),
+          ),
+        ),
+        const SizedBox(height: 28),
+        Center(
+          child: Container(
+            width: 56,
+            height: 56,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: T.teal,
+            ),
+            child: const Icon(LucideIcons.lock, color: Colors.white, size: 26),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Center(child: Text('Enter your PIN', style: T.h1)),
+        const SizedBox(height: 4),
+        Center(
+          child: Text(
+            who,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: T.text(13, color: T.white(.55)),
+          ),
+        ),
+        const SizedBox(height: 20),
+        PinDots(n: _pinController.text.length, max: 6),
+        SizedBox(
+          height: 24,
+          child: Center(
+            child: Text(
+              _isLoading ? 'Signing in...' : '',
+              style: T.text(12, color: T.white(.55)),
+            ),
+          ),
+        ),
+        Numpad(
+          value: _pinController.text,
+          max: 6,
+          onChanged: _onPinChanged,
         ),
       ],
     );
@@ -1423,9 +1493,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                   duration: const Duration(milliseconds: 220),
                   height: 4,
                   decoration: BoxDecoration(
-                    color: done ? T.cyan300 : T.white(.15),
+                    color: done ? T.teal : T.white(.15),
                     borderRadius: BorderRadius.circular(99),
-                    boxShadow: done ? T.glow(T.cyan400) : null,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -1434,7 +1503,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                   style: T.text(
                     10,
                     w: T.w600,
-                    color: isCurr ? T.cyan200 : T.white(.35),
+                    color: isCurr ? Colors.white : T.white(.35),
                   ),
                 ),
               ],
@@ -1451,7 +1520,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     final pinsMismatch = confirm.isNotEmpty && pin != confirm;
     final step1Ready = _nameController.text.trim().length >= 2 &&
         _emailController.text.trim().isNotEmpty &&
-        pin.length >= _accountConfig.pinMinLength &&
+        pin.length == 6 &&
         pin == confirm;
 
     return ListView(
@@ -1493,15 +1562,14 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
             children: [
               Expanded(
                 child: Field(
-                  label:
-                      'Create PIN (${_accountConfig.pinMinLength}–${_accountConfig.pinMaxLength})',
+                  label: 'Create 6-digit PIN',
                   mono: true,
                   controller: _pinController,
-                  hint: '••••',
+                  hint: '••••••',
                   obscure: true,
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  maxLength: _accountConfig.pinMaxLength,
+                  maxLength: 6,
                   onChanged: (_) => setState(() {}),
                 ),
               ),
@@ -1511,11 +1579,11 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                   label: 'Confirm PIN',
                   mono: true,
                   controller: _confirmPinController,
-                  hint: '••••',
+                  hint: '••••••',
                   obscure: true,
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  maxLength: _accountConfig.pinMaxLength,
+                  maxLength: 6,
                   onChanged: (_) => setState(() {}),
                 ),
               ),
@@ -1555,8 +1623,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                     height: 44,
                     decoration: BoxDecoration(
                       color: T.op(
-                          _capturedIdPath != null ? T.emerald400 : T.cyan400,
-                          .16),
+                          _capturedIdPath != null ? T.emerald400 : T.teal,
+                          .18),
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Icon(
@@ -1564,7 +1632,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                           ? LucideIcons.check
                           : LucideIcons.camera,
                       color:
-                          _capturedIdPath != null ? T.emerald300 : T.cyan300,
+                          _capturedIdPath != null ? T.emerald300 : T.teal,
                       size: 22,
                     ),
                   ),
@@ -1720,7 +1788,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                                   decoration: BoxDecoration(
                                     shape: BoxShape.circle,
                                     border:
-                                        Border.all(color: T.cyan300, width: 1.5),
+                                        Border.all(color: T.teal, width: 1.5),
                                   ),
                                 ),
                               ),
@@ -1732,21 +1800,11 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                       height: 72,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        gradient: _cardStep == 'success'
-                            ? const LinearGradient(
-                                colors: [T.emerald, Color(0xFF059669)])
+                        color: _cardStep == 'success'
+                            ? T.emerald
                             : _cardStep == 'error'
-                                ? const LinearGradient(
-                                    colors: [Color(0xFF991B1B), T.red500])
-                                : T.btnLiquidGradient,
-                        boxShadow: T.glow(
-                          _cardStep == 'success'
-                              ? T.emerald
-                              : _cardStep == 'error'
-                                  ? T.red400
-                                  : T.cyan500,
-                          28,
-                        ),
+                                ? T.red500
+                                : T.teal,
                       ),
                       child: Icon(
                         _cardStep == 'success'
@@ -1818,6 +1876,10 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (_heroFloatController.isAnimating != _wantsHeroFloat ||
+        _pulseController.isAnimating != _wantsPulse) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _syncAnimations());
+    }
     return Scaffold(
       backgroundColor: T.bg,
       body: AppBackground(

@@ -29,7 +29,6 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   bool _hideBalance = false;
-  bool _cardHovered = false;
   String _filter = 'all'; // all | nfc | sare | cashin
 
   Timer? _armedTick;
@@ -142,10 +141,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         height: 46,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          color: selected ? T.op(T.cyan400, .2) : T.white(.06),
+                          color: selected ? T.teal : T.white(.06),
                           borderRadius: BorderRadius.circular(16),
                           border: Border.all(
-                            color: selected ? T.op(T.cyan300, .6) : T.white(.1),
+                            color: selected ? T.teal : T.white(.1),
                           ),
                         ),
                         child: Text(
@@ -153,7 +152,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           style: T.text(
                             13,
                             w: T.w700,
-                            color: selected ? T.cyan200 : T.white(.75),
+                            color: selected ? Colors.white : T.white(.75),
                           ),
                         ),
                       ),
@@ -329,19 +328,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               border: Border(
                                 top: align.y < 0
                                     ? const BorderSide(
-                                        color: T.cyan300, width: 2.5)
+                                        color: T.teal, width: 2.5)
                                     : BorderSide.none,
                                 bottom: align.y > 0
                                     ? const BorderSide(
-                                        color: T.cyan300, width: 2.5)
+                                        color: T.teal, width: 2.5)
                                     : BorderSide.none,
                                 left: align.x < 0
                                     ? const BorderSide(
-                                        color: T.cyan300, width: 2.5)
+                                        color: T.teal, width: 2.5)
                                     : BorderSide.none,
                                 right: align.x > 0
                                     ? const BorderSide(
-                                        color: T.cyan300, width: 2.5)
+                                        color: T.teal, width: 2.5)
                                     : BorderSide.none,
                               ),
                             ),
@@ -351,10 +350,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     Container(
                       width: 170,
                       height: 2,
-                      decoration: BoxDecoration(
-                        color: T.cyan300,
-                        boxShadow: T.glow(T.cyan300, 12),
-                      ),
+                      color: T.teal,
                     ),
                     Positioned(
                       bottom: 24,
@@ -412,7 +408,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     const SizedBox(height: 2),
                     Text(
                       user.email.isNotEmpty ? user.email : user.cardId,
-                      style: T.mono(12, color: T.cyan300),
+                      style: T.mono(12, color: T.teal),
                     ),
                   ],
                 ),
@@ -523,27 +519,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     style: T.text(21, w: T.w800),
                   ),
                   const SizedBox(height: 4),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: T.op(T.emerald400, .15),
-                      borderRadius: BorderRadius.circular(99),
-                      border: Border.all(color: T.op(T.emerald300, .35)),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(LucideIcons.badgeCheck,
-                            size: 12, color: T.emerald300),
-                        const SizedBox(width: 4),
-                        Text(
-                          'KYC Verified',
-                          style: T.text(10, w: T.w600, color: T.emerald300),
-                        ),
-                      ],
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -590,10 +565,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   child: Container(
                     width: 40,
                     height: 40,
-                    decoration: BoxDecoration(
+                    decoration: const BoxDecoration(
                       shape: BoxShape.circle,
-                      gradient: T.btnLiquidGradient,
-                      boxShadow: T.btnShadow,
+                      color: T.teal,
                     ),
                     alignment: Alignment.center,
                     child: Text(
@@ -609,59 +583,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         const SizedBox(height: 16),
 
         // ── 2. Hero Card Tile + Wallet Balance + Arm CTA ───────────────────
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 260),
+        Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(30),
-            gradient: T.glassGradient,
-            border: Border.all(
-              color: user.cardArmed
-                  ? T.op(T.emerald300, .75)
-                  : T.glassBorder,
-              width: user.cardArmed ? 1.0 : 0.6,
-            ),
-            boxShadow: user.cardArmed
-                ? [
-                    BoxShadow(
-                        color: T.op(T.emerald, .32),
-                        blurRadius: 36,
-                        spreadRadius: 1),
-                  ]
-                : T.glassShadow,
+            color: T.surface,
+            border: Border.all(color: T.surfaceBorder, width: 0.6),
           ),
           padding: const EdgeInsets.all(12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               GestureDetector(
-                onTapDown: (_) => setState(() => _cardHovered = true),
-                onTapUp: (_) {
-                  setState(() => _cardHovered = false);
-                  widget.onNavigateTab?.call('cards');
-                },
-                onTapCancel: () => setState(() => _cardHovered = false),
-                child: TweenAnimationBuilder<Offset>(
-                  tween: Tween(
-                    begin: const Offset(5, -6),
-                    end: _cardHovered ? Offset.zero : const Offset(5, -6),
-                  ),
-                  duration: const Duration(milliseconds: 220),
-                  builder: (_, v, child) {
-                    return Transform(
-                      alignment: Alignment.center,
-                      transform: Matrix4.identity()
-                        ..setEntry(3, 2, 1 / 1000)
-                        ..rotateX(v.dx * math.pi / 180)
-                        ..rotateY(v.dy * math.pi / 180),
-                      child: child,
-                    );
-                  },
-                  child: ui_card.CardFace(
-                    card: activeUiCard,
-                    holder: holderUpper,
-                    tiltX: _cardHovered ? 0.15 : -0.2,
-                    tiltY: 0.1,
-                  ),
+                onTap: () => widget.onNavigateTab?.call('cards'),
+                // Front-facing only: no perspective tilt, no sheen.
+                child: ui_card.CardFace(
+                  card: activeUiCard,
+                  holder: holderUpper,
                 ),
               ),
               Padding(
@@ -742,7 +679,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           children: const [
                             Icon(LucideIcons.nfc, size: 17),
                             SizedBox(width: 8),
-                            Text('Arm Card for NFC Payment'),
+                            Text('Tap ready'),
                           ],
                         ),
                       )
@@ -816,7 +753,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         if (user.sarePendingOrder != null) ...[
           const SizedBox(height: 16),
           Glass(
-            kind: GlassKind.tint,
             padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -824,7 +760,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 Row(
                   children: [
                     const Icon(LucideIcons.shoppingBasket,
-                        color: T.cyan200, size: 24),
+                        color: T.teal, size: 24),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
@@ -872,8 +808,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('See all', style: T.text(12, w: T.w600, color: T.cyan300)),
-                Icon(LucideIcons.chevronRight, size: 14, color: T.cyan300),
+                Text('See all', style: T.text(12, w: T.w600, color: T.teal)),
+                const Icon(LucideIcons.chevronRight, size: 14, color: T.teal),
               ],
             ),
           ),
@@ -897,14 +833,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 14),
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        color: _filter == f.$1
-                            ? T.op(T.cyan400, .20)
-                            : T.white(.05),
+                        color: _filter == f.$1 ? T.teal : T.white(.05),
                         borderRadius: BorderRadius.circular(99),
                         border: Border.all(
-                          color: _filter == f.$1
-                              ? T.op(T.cyan300, .60)
-                              : T.white(.10),
+                          color: _filter == f.$1 ? T.teal : T.white(.10),
                         ),
                       ),
                       child: Text(
@@ -912,8 +844,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         style: T.text(
                           12,
                           w: T.w600,
-                          color:
-                              _filter == f.$1 ? T.cyan200 : T.white(.60),
+                          color: _filter == f.$1 ? Colors.white : T.white(.60),
                         ),
                       ),
                     ),
@@ -951,7 +882,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         PressScale(
           onTap: () => widget.onNavigateTab?.call('sare'),
           child: Glass(
-            kind: GlassKind.tint,
             padding: const EdgeInsets.all(16),
             child: Row(
               children: [
@@ -959,11 +889,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   width: 44,
                   height: 44,
                   decoration: BoxDecoration(
-                    color: T.op(T.cyan500, .20),
+                    color: T.white(.06),
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child:
-                      const Icon(LucideIcons.store, color: T.cyan300, size: 22),
+                      const Icon(LucideIcons.store, color: Colors.white, size: 22),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -978,10 +908,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     ],
                   ),
                 ),
-                Badge2(
+                const Badge2(
                   'OPEN',
-                  color: T.cyan400,
-                  textColor: T.cyan200,
+                  color: T.teal,
+                  textColor: Colors.white,
                   fontSize: 9.5,
                 ),
               ],
@@ -1004,7 +934,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 22, color: T.cyan300),
+              Icon(icon, size: 22, color: Colors.white),
               const SizedBox(height: 6),
               FittedBox(
                 fit: BoxFit.scaleDown,
@@ -1066,7 +996,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     ),
                     TextSpan(
                       text: 'TM•$macSuffix',
-                      style: T.mono(10.5, color: T.op(T.cyan300, .80)),
+                      style: T.mono(10.5, color: T.op(T.teal, .90)),
                     ),
                   ]),
                 ),

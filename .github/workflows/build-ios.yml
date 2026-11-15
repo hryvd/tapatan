@@ -1,4 +1,4 @@
-name: Build iOS IPA (tap@tan v2)
+name: Build iOS IPA (tap@tan v3)
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ on:
 
 jobs:
   build-ios:
-    name: Build Unsigned iOS IPA on macOS (v2)
+    name: Build Unsigned iOS IPA on macOS (v3)
     runs-on: macos-15
     timeout-minutes: 35
 
@@ -49,20 +49,20 @@ jobs:
         working-directory: tapatan_app
         run: flutter build ios --release --no-codesign
 
-      - name: Package Runner.app into tapatan-app-v2-ios.ipa
+      - name: Package Runner.app into tapatan-app-v3-ios.ipa
         working-directory: tapatan_app
         run: |
           mkdir -p build/ios/ipa_out/Payload
           cp -R build/ios/iphoneos/Runner.app build/ios/ipa_out/Payload/Runner.app
           cd build/ios/ipa_out
-          zip -qry tapatan-app-v2-ios.ipa Payload
-          ls -lh tapatan-app-v2-ios.ipa
+          zip -qry tapatan-app-v3-ios.ipa Payload
+          ls -lh tapatan-app-v3-ios.ipa
 
-      - name: Upload tapatan-app-v2-ios.ipa artifact
+      - name: Upload tapatan-app-v3-ios.ipa artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tapatan-app-v2-ios-ipa
-          path: tapatan_app/build/ios/ipa_out/tapatan-app-v2-ios.ipa
+          name: tapatan-app-v3-ios-ipa
+          path: tapatan_app/build/ios/ipa_out/tapatan-app-v3-ios.ipa
           if-no-files-found: error
           retention-days: 30
 

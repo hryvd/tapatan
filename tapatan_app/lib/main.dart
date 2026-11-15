@@ -1,4 +1,8 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -7,7 +11,18 @@ import 'screens/security_info_screen.dart';
 import 'ui/tokens.dart';
 import 'screens/main_shell.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Never let an unhandled async error (NFC/camera/font fetch) take the app down.
+  FlutterError.onError = (details) {
+    if (kDebugMode) FlutterError.dumpErrorToConsole(details);
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    if (kDebugMode) debugPrint('Unhandled: $error\n$stack');
+    return true;
+  };
+  GoogleFonts.config.allowRuntimeFetching = false;
+  await SystemChrome.setPreferredOrientations(const [DeviceOrientation.portraitUp]);
   runApp(
     const ProviderScope(
       child: BantayApp(),
@@ -21,16 +36,16 @@ class BantayApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'tap@tan v2',
+      title: 'tap@tan v3',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: T.bg,
         canvasColor: T.bg,
-        primaryColor: T.cyan600,
+        primaryColor: T.teal,
         colorScheme: const ColorScheme.dark(
-          primary: T.cyan400,
-          secondary: T.indigo500,
+          primary: T.teal,
+          secondary: T.teal,
           surface: T.card,
           error: T.red500,
         ),
@@ -41,7 +56,7 @@ class BantayApp extends StatelessWidget {
         splashFactory: NoSplash.splashFactory,
         highlightColor: Colors.transparent,
         snackBarTheme: SnackBarThemeData(
-          backgroundColor: T.glassStrongFill,
+          backgroundColor: T.surfaceStrong,
           contentTextStyle: T.text(12.5, w: T.w600, color: Colors.white),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),

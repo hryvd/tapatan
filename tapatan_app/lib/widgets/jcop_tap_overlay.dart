@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 
 import '../ui/tokens.dart';
@@ -30,7 +28,7 @@ extension JcopAuthStepLabel on JcopAuthStep {
       case JcopAuthStep.gettingChallenge:
         return 'GET CHALLENGE 0x84 · nonce';
       case JcopAuthStep.authenticating:
-        return 'INTERNAL AUTH 0x88 · TPT4';
+        return 'INTERNAL AUTH 0x88 · TMAC';
       case JcopAuthStep.verifyingPin:
         return 'VERIFY 0x20 · Card PIN';
       case JcopAuthStep.success:
@@ -84,14 +82,21 @@ class JcopTapOverlay extends StatefulWidget {
 
 class _JcopTapOverlayState extends State<JcopTapOverlay>
     with TickerProviderStateMixin {
-  late final AnimationController _rippleCtrl = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 2400),
-  )..repeat();
-  late final AnimationController _checkCtrl = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 450),
-  );
+  late final AnimationController _rippleCtrl;
+  late final AnimationController _checkCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _rippleCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    )..repeat();
+    _checkCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 450),
+    );
+  }
 
   static const _apduList = [
     'Connecting ISO 14443-4',
@@ -128,14 +133,12 @@ class _JcopTapOverlayState extends State<JcopTapOverlay>
   Widget build(BuildContext context) {
     final isError = widget.step == JcopAuthStep.error;
     final isSuccess = widget.step == JcopAuthStep.success;
-    final tone = isError ? T.red400 : (isSuccess ? T.emerald400 : T.cyan400);
+    final tone = isError ? T.red400 : (isSuccess ? T.emerald400 : T.teal);
 
     return Material(
       type: MaterialType.transparency,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(
-          color: T.op(T.bg, .92),
+      child: Container(
+        color: T.op(T.bg, .96),
           padding: EdgeInsets.fromLTRB(
             24,
             MediaQuery.of(context).padding.top + 20,
@@ -217,12 +220,8 @@ class _JcopTapOverlayState extends State<JcopTapOverlay>
                                         curve: Curves.elasticOut))
                                 : const AlwaysStoppedAnimation(1.0),
                             child: Container(
-                              decoration: BoxDecoration(
+                              decoration: const BoxDecoration(
                                 shape: BoxShape.circle,
-                                boxShadow: [
-                                  BoxShadow(
-                                      color: T.op(tone, .33), blurRadius: 60),
-                                ],
                               ),
                               child: Glass(
                                 radius: 64,
@@ -270,7 +269,7 @@ class _JcopTapOverlayState extends State<JcopTapOverlay>
                                         color: i + 1 < widget.step.stepIndex
                                             ? T.emerald400
                                             : i + 1 == widget.step.stepIndex
-                                                ? T.cyan400
+                                                ? T.teal
                                                 : T.white(.35),
                                       ),
                                     ),
@@ -292,7 +291,7 @@ class _JcopTapOverlayState extends State<JcopTapOverlay>
                           horizontal: 14, vertical: 10),
                       child: Text(
                         widget.successDetail!,
-                        style: T.mono(11, color: T.cyan200),
+                        style: T.mono(11, color: Colors.white),
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -326,7 +325,6 @@ class _JcopTapOverlayState extends State<JcopTapOverlay>
                 ),
             ],
           ),
-        ),
       ),
     );
   }

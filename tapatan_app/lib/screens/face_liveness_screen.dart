@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
@@ -40,13 +41,13 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
   int _faceDetectedFrames = 0;
   bool _blinkDetected = false;
   bool _smileDetected = false;
+  bool _transitioning = false;
+  bool _disposed = false;
   Timer? _livenessTimer;
   bool _streamActive = false;
 
   late AnimationController _pulseController;
   late Animation<double> _pulseAnim;
-  late AnimationController _glowController;
-  late Animation<double> _glowAnim;
 
   @override
   void initState() {
@@ -69,14 +70,6 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
-    _glowController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1600),
-    )..repeat(reverse: true);
-    _glowAnim = Tween<double>(begin: 0.4, end: 1.0).animate(
-      CurvedAnimation(parent: _glowController, curve: Curves.easeInOut),
-    );
-
     _initCamera();
   }
 
@@ -97,7 +90,7 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
 
       final controller = CameraController(
         frontCam,
-        ResolutionPreset.medium,
+        ResolutionPreset.low,
         enableAudio: false,
         imageFormatGroup: Platform.isAndroid
             ? ImageFormatGroup.nv21
@@ -105,6 +98,10 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
       );
 
       await controller.initialize();
+      if (_disposed) {
+        await controller.dispose();
+        return;
+      }
 
       if (mounted) {
         setState(() {
@@ -136,10 +133,8 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
         }
 
         final faces = await _faceDetector.processImage(inputImage);
-        if (!mounted) {
-          _isProcessing = false;
-          return;
-        }
+        if (_disposed) return;
+        if (!mounted) return;
 
         if (faces.isNotEmpty) {
           final face = faces.first;
@@ -161,31 +156,82 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
         // Ignore individual frame errors
       } finally {
         _isProcessing = false;
+        if (_disposed) {
+          try {
+            await _faceDetector.close();
+          } catch (_) {}
+        }
       }
     });
   }
 
   InputImage? _buildInputImage(CameraImage image) {
-    if (_controller == null) return null;
+    if (_controller == null || _disposed) return null;
     final camera = _controller!.description;
     final rotation = InputImageRotationValue.fromRawValue(
           camera.sensorOrientation,
         ) ??
         InputImageRotation.rotation0deg;
 
-    final format = InputImageFormatValue.fromRawValue(image.format.raw);
-    if (format == null) return null;
+    if (image.planes.length == 1) {
+      final format = InputImageFormatValue.fromRawValue(image.format.raw);
+      if (format == null) return null;
+      final plane = image.planes.first;
+      return InputImage.fromBytes(
+        bytes: plane.bytes,
+        metadata: InputImageMetadata(
+          size: Size(image.width.toDouble(), image.height.toDouble()),
+          rotation: rotation,
+          format: format,
+          bytesPerRow: plane.bytesPerRow,
+        ),
+      );
+    }
 
-    final plane = image.planes.first;
-    return InputImage.fromBytes(
-      bytes: plane.bytes,
-      metadata: InputImageMetadata(
-        size: Size(image.width.toDouble(), image.height.toDouble()),
-        rotation: rotation,
-        format: format,
-        bytesPerRow: plane.bytesPerRow,
-      ),
-    );
+    // Android CameraX YUV_420_888 (3 planes) -> contiguous NV21 so ML Kit never crashes.
+    if (Platform.isAndroid && image.planes.length >= 3) {
+      final w = image.width;
+      final h = image.height;
+      final nv21 = Uint8List(w * h * 3 ~/ 2);
+      final yPlane = image.planes[0];
+      final uPlane = image.planes[1];
+      final vPlane = image.planes[2];
+      final yRowStride = yPlane.bytesPerRow;
+      final yPixelStride = yPlane.bytesPerPixel ?? 1;
+
+      var dst = 0;
+      for (var row = 0; row < h; row++) {
+        final srcRow = row * yRowStride;
+        for (var col = 0; col < w; col++) {
+          nv21[dst++] = yPlane.bytes[srcRow + col * yPixelStride];
+        }
+      }
+
+      final uvRowStride = vPlane.bytesPerRow;
+      final uvPixelStride = vPlane.bytesPerPixel ?? 1;
+      final uRowStride = uPlane.bytesPerRow;
+      final uPixelStride = uPlane.bytesPerPixel ?? 1;
+      for (var row = 0; row < h ~/ 2; row++) {
+        final vRow = row * uvRowStride;
+        final uRow = row * uRowStride;
+        for (var col = 0; col < w ~/ 2; col++) {
+          nv21[dst++] = vPlane.bytes[vRow + col * uvPixelStride];
+          nv21[dst++] = uPlane.bytes[uRow + col * uPixelStride];
+        }
+      }
+
+      return InputImage.fromBytes(
+        bytes: nv21,
+        metadata: InputImageMetadata(
+          size: Size(w.toDouble(), h.toDouble()),
+          rotation: rotation,
+          format: InputImageFormat.nv21,
+          bytesPerRow: w,
+        ),
+      );
+    }
+
+    return null;
   }
 
   void _onFaceDetected(Face face) {
@@ -219,9 +265,11 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
         if (leftOpen < 0.2 && rightOpen < 0.2) {
           _blinkDetected = true;
         }
-        if (_blinkDetected) {
-          Future.delayed(const Duration(milliseconds: 600), () {
-            if (mounted && _step == _LivenessStep.blinkCheck) {
+        if (_blinkDetected && !_transitioning) {
+          _transitioning = true;
+          Future.delayed(const Duration(milliseconds: 500), () {
+            _transitioning = false;
+            if (mounted && !_disposed && _step == _LivenessStep.blinkCheck) {
               setState(() {
                 _step = _LivenessStep.smileCheck;
                 _instruction = 'Now smile 😊';
@@ -235,12 +283,13 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
 
       case _LivenessStep.smileCheck:
         final smilingProb = face.smilingProbability ?? 0.0;
-        if (smilingProb > 0.75) {
+        if (smilingProb > 0.72) {
           _smileDetected = true;
         }
-        if (_smileDetected) {
-          Future.delayed(const Duration(milliseconds: 500), () {
-            if (mounted && _step == _LivenessStep.smileCheck) {
+        if (_smileDetected && !_transitioning) {
+          _transitioning = true;
+          Future.delayed(const Duration(milliseconds: 450), () {
+            if (mounted && !_disposed && _step == _LivenessStep.smileCheck) {
               setState(() {
                 _step = _LivenessStep.done;
                 _instruction = 'Liveness Confirmed ✓';
@@ -259,29 +308,49 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
   }
 
   Future<void> _stopStreamAndReturn() async {
-    await Future.delayed(const Duration(milliseconds: 1200));
-    if (mounted) Navigator.of(context).pop(true);
+    try {
+      if (_streamActive && (_controller?.value.isStreamingImages ?? false)) {
+        _streamActive = false;
+        await _controller?.stopImageStream();
+      }
+    } catch (_) {}
+    await Future.delayed(const Duration(milliseconds: 900));
+    if (mounted && !_disposed) Navigator.of(context).pop(true);
   }
 
   @override
   void dispose() {
+    _disposed = true;
     _livenessTimer?.cancel();
     _pulseController.dispose();
-    _glowController.dispose();
-    _faceDetector.close();
-    if (_streamActive && (_controller?.value.isStreamingImages ?? false)) {
+    final ctrl = _controller;
+    _controller = null;
+    if (!_isProcessing) {
       try {
-        _controller?.stopImageStream();
+        _faceDetector.close();
       } catch (_) {}
     }
-    _controller?.dispose();
+    if (ctrl != null) {
+      if (_streamActive && ctrl.value.isStreamingImages) {
+        _streamActive = false;
+        ctrl.stopImageStream().catchError((_) {}).whenComplete(() {
+          try {
+            ctrl.dispose();
+          } catch (_) {}
+        });
+      } else {
+        try {
+          ctrl.dispose();
+        } catch (_) {}
+      }
+    }
     super.dispose();
   }
 
   Color get _frameColor {
     switch (_step) {
       case _LivenessStep.detecting:
-        return T.cyan400;
+        return T.teal;
       case _LivenessStep.blinkCheck:
         return T.amber500;
       case _LivenessStep.smileCheck:
@@ -322,29 +391,46 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
           // Dark overlay with oval cutout
           if (_isInitialized) _buildOvalOverlay(context),
 
-          // Top bar
+          // Top bar with well-placed X button and centered title
           SafeArea(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              child: Row(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              child: Stack(
+                alignment: Alignment.center,
                 children: [
-                  GlassIconBtn(
-                    icon: LucideIcons.x,
-                    size: 40,
-                    iconSize: 18,
-                    onTap: () => Navigator.of(context).pop(null),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: T.surfaceStrong,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: T.surfaceBorder),
+                    ),
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text('Face Liveness Check',
-                            style: T.text(16, w: T.w800)),
-                        Text('On-device · No data sent to servers',
-                            style: T.caption),
+                            style: T.text(14, w: T.w700)),
+                        Text('On-device biometric verification',
+                            style: T.caption.copyWith(fontSize: 11)),
                       ],
+                    ),
+                  ),
+                  Positioned(
+                    right: 0,
+                    child: PressScale(
+                      onTap: () => Navigator.of(context).pop(null),
+                      child: Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: T.surfaceStrong,
+                          border: Border.all(color: T.surfaceBorder),
+                        ),
+                        child: const Icon(LucideIcons.x,
+                            color: Colors.white, size: 20),
+                      ),
                     ),
                   ),
                 ],
@@ -398,19 +484,13 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
     final frameH = size.width * 0.85;
     final centerY = size.height * 0.40;
 
-    return AnimatedBuilder(
-      animation: _glowAnim,
-      builder: (_, _) {
-        return CustomPaint(
-          painter: _OvalOverlayPainter(
-            frameWidth: frameW,
-            frameHeight: frameH,
-            centerY: centerY,
-            borderColor: _frameColor,
-            glowOpacity: _glowAnim.value,
-          ),
-        );
-      },
+    return CustomPaint(
+      painter: _OvalOverlayPainter(
+        frameWidth: frameW,
+        frameHeight: frameH,
+        centerY: centerY,
+        borderColor: _frameColor,
+      ),
     );
   }
 
@@ -511,7 +591,7 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const CircularProgressIndicator(color: T.cyan400),
+            const CircularProgressIndicator(color: T.teal),
             const SizedBox(height: 16),
             Text(
               'Starting camera...',
@@ -558,14 +638,12 @@ class _OvalOverlayPainter extends CustomPainter {
   final double frameHeight;
   final double centerY;
   final Color borderColor;
-  final double glowOpacity;
 
   _OvalOverlayPainter({
     required this.frameWidth,
     required this.frameHeight,
     required this.centerY,
     required this.borderColor,
-    required this.glowOpacity,
   });
 
   @override
@@ -575,30 +653,25 @@ class _OvalOverlayPainter extends CustomPainter {
     final rect = Rect.fromLTWH(left, top, frameWidth, frameHeight);
 
     final dimPaint = Paint()..color = T.blk(.65);
-    final clearPaint = Paint()..blendMode = BlendMode.clear;
+    // Path subtraction avoids full-screen GPU saveLayer allocation during camera streaming.
+    final outer = Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
+    final hole = Path()..addOval(rect);
+    canvas.drawPath(
+      Path.combine(PathOperation.difference, outer, hole),
+      dimPaint,
+    );
 
-    canvas.saveLayer(Rect.fromLTWH(0, 0, size.width, size.height), Paint());
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), dimPaint);
-    canvas.drawOval(rect, clearPaint);
-    canvas.restore();
-
-    // Glowing oval border
-    final borderPaint = Paint()
-      ..color = borderColor.withValues(alpha: 0.6 + glowOpacity * 0.4)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5
-      ..maskFilter = MaskFilter.blur(BlurStyle.normal, 6 * glowOpacity);
-    canvas.drawOval(rect, borderPaint);
-
-    // Solid border on top
     final solidPaint = Paint()
       ..color = borderColor
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0;
+      ..strokeWidth = 2.5;
     canvas.drawOval(rect, solidPaint);
   }
 
   @override
   bool shouldRepaint(_OvalOverlayPainter old) =>
-      old.borderColor != borderColor || old.glowOpacity != glowOpacity;
+      old.borderColor != borderColor ||
+      old.frameWidth != frameWidth ||
+      old.frameHeight != frameHeight ||
+      old.centerY != centerY;
 }

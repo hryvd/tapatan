@@ -49,11 +49,12 @@ class _GlassButtonState extends State<GlassButton>
   Widget build(BuildContext context) {
     final bool disabled = widget.onPressed == null || widget.isLoading;
 
-    // Determine gradient colors
-    final List<Color> gradColors = widget.gradientColors ??
-        (widget.isSecondary
-            ? [const Color(0xFF0C1E35), const Color(0xFF0A1628)]
-            : [const Color(0xFF0369A1), const Color(0xFF0891B2)]);
+    // Solid teal or neutral dark pill (no gradients, no glow shadows)
+    final Color bgColor = widget.gradientColors != null && widget.gradientColors!.isNotEmpty
+        ? widget.gradientColors!.first
+        : (widget.isSecondary
+            ? const Color(0xFF141D2E)
+            : const Color(0xFF0D9488));
 
     Widget buttonContent = widget.isLoading
         ? const SizedBox(
@@ -88,28 +89,10 @@ class _GlassButtonState extends State<GlassButton>
             padding: widget.padding,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(14),
-              gradient: LinearGradient(
-                colors: gradColors,
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+              color: bgColor,
               border: Border.all(
-                color: widget.isSecondary
-                    ? const Color(0xFF0891B2).withValues(alpha: 0.35)
-                    : Colors.white.withValues(alpha: 0.15),
+                color: Colors.white.withValues(alpha: 0.14),
               ),
-              boxShadow: disabled
-                  ? null
-                  : [
-                      BoxShadow(
-                        color: (widget.isSecondary
-                                ? const Color(0xFF0369A1)
-                                : const Color(0xFF0891B2))
-                            .withValues(alpha: 0.30),
-                        blurRadius: 20,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
             ),
             child: Center(
               child: DefaultTextStyle(
