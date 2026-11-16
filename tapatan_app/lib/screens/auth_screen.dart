@@ -16,7 +16,7 @@ import '../widgets/account_backend_settings_sheet.dart';
 import 'camera_capture_overlay.dart';
 import 'face_liveness_screen.dart';
 
-enum AuthView { landing, login, signup, registerCard }
+enum AuthView { landing, quickUnlock, login, signup, registerCard }
 
 class AuthScreen extends ConsumerStatefulWidget {
   const AuthScreen({super.key});
@@ -45,6 +45,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
   int _retrySecondsLeft = 0;
   Timer? _retryTimer;
   String? _nfcErrorNote;
+  int _nfcSessionGen = 0;
 
   List<AccountSummary> _savedAccounts = const [];
   AccountManagementConfig _accountConfig = const AccountManagementConfig();
@@ -59,10 +60,12 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
   late final AnimationController _pulseController;
   late final AnimationController _heroFloatController;
 
+  bool get _isNfcSignInView =>
+      _view == AuthView.login || _view == AuthView.quickUnlock;
   bool get _wantsHeroFloat => _view == AuthView.landing && _landingPage < 2;
   bool get _wantsPulse =>
       (_view == AuthView.landing && _landingPage == 1) ||
-      (_view == AuthView.login && _nfcTapping) ||
+      (_isNfcSignInView && _nfcTapping) ||
       (_view == AuthView.registerCard && _cardStep == 'scanning');
 
   void _syncAnimations() {
@@ -123,23 +126,42 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     });
   }
 
+  bool get _hasRememberedAccount =>
+      _savedAccounts.isNotEmpty || _emailController.text.trim().isNotEmpty;
+
+  void _openPreferredSignIn() {
+    if (_hasRememberedAccount) {
+      if (_emailController.text.trim().isEmpty && _savedAccounts.isNotEmpty) {
+        _emailController.text = _savedAccounts.first.email;
+      }
+      _switchView(AuthView.quickUnlock);
+    } else {
+      _switchView(AuthView.login);
+    }
+  }
+
   Future<void> _initializeAuthState() async {
     await AccountBackendService.initialize();
     await _refreshAccountsAndConfig();
     final lastEmail = await AccountBackendService.getLastSignedInEmail();
     final active = await AccountBackendService.getActiveSessionAccount();
     if (!mounted) return;
-    final email = lastEmail.isNotEmpty ? lastEmail : (active?.email ?? '');
+    final email = lastEmail.isNotEmpty
+        ? lastEmail
+        : (active?.email.isNotEmpty == true
+            ? active!.email
+            : (_savedAccounts.isNotEmpty ? _savedAccounts.first.email : ''));
     if (email.isNotEmpty) {
       _emailController.text = email;
     }
-    // Returning users always land directly on Sign In when reopened
+    // Returning or newly signed-up users open directly to NFC tap + 6-digit PIN unlock
     if (_savedAccounts.isNotEmpty || email.isNotEmpty) {
-      _switchView(AuthView.login);
+      _switchView(AuthView.quickUnlock);
     }
   }
 
   void _switchView(AuthView view, {int? resetSignupStep}) {
+    _nfcSessionGen++;
     _retryTimer?.cancel();
     NfcService.stopSession();
     setState(() {
@@ -150,12 +172,17 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
       _retrySecondsLeft = 0;
       _nfcErrorNote = null;
       _pinStep = false;
+      if (view == AuthView.quickUnlock) {
+        _pinController.clear();
+      }
     });
 
-    if (view == AuthView.login && !_nfcCompleted && !_isNavigating) {
+    if ((view == AuthView.quickUnlock || view == AuthView.login) &&
+        !_nfcCompleted &&
+        !_isNavigating) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted &&
-            _view == AuthView.login &&
+            _view == view &&
             !_nfcTapping &&
             !_nfcCompleted &&
             !_isNavigating) {
@@ -167,6 +194,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
 
   void _pauseBackgroundNfcForManualTyping() {
     if (_nfcTapping || _retrySecondsLeft > 0) {
+      _nfcSessionGen++;
       _retryTimer?.cancel();
       NfcService.stopSession();
       setState(() {
@@ -267,6 +295,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
 
   Future<void> _handleNFCTapLogin({bool userInitiated = true}) async {
     if (_nfcTapping || _nfcCompleted || _isNavigating) return;
+    final sessionGen = ++_nfcSessionGen;
     _retryTimer?.cancel();
     setState(() {
       _nfcTapping = true;
@@ -277,7 +306,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     try {
       final res = await NfcService.readCardIdentity();
       if (!mounted ||
-          _view != AuthView.login ||
+          sessionGen != _nfcSessionGen ||
+          !_isNfcSignInView ||
           _isNavigating ||
           _nfcCompleted) {
         return;
@@ -296,7 +326,12 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
           cardName: cardName,
         );
 
-        if (!mounted || _view != AuthView.login || _isNavigating) return;
+        if (!mounted ||
+            sessionGen != _nfcSessionGen ||
+            !_isNfcSignInView ||
+            _isNavigating) {
+          return;
+        }
 
         if (!authRes.success || authRes.account == null) {
           final errMsg = authRes.error ?? 'Card is not linked to an account.';
@@ -304,9 +339,14 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
             _nfcTapping = false;
             _nfcErrorNote = errMsg;
           });
-          _showSnack('$errMsg Re-scanning in 5s...', isError: true);
+          if (userInitiated) {
+            _showSnack('$errMsg Re-scanning in 5s...', isError: true);
+          }
           _start5SecRetryTimer(() {
-            if (mounted && _view == AuthView.login && !_nfcCompleted) {
+            if (mounted &&
+                sessionGen == _nfcSessionGen &&
+                _isNfcSignInView &&
+                !_nfcCompleted) {
               _handleNFCTapLogin(userInitiated: false);
             }
           });
@@ -333,7 +373,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
         setState(() {
           _nfcTapping = false;
           _nfcErrorNote = hardwareUnavailable
-              ? 'NFC reader unavailable · Use Email & PIN or tap to re-check'
+              ? 'NFC reader unavailable · Use 6-digit PIN or tap to retry'
               : errMsg;
         });
         if (hardwareUnavailable) {
@@ -341,24 +381,36 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
             _showSnack(errMsg, isError: true);
           }
         } else {
-          _showSnack('$errMsg Re-scanning in 5s...', isError: true);
+          if (userInitiated) {
+            _showSnack('$errMsg Re-scanning in 5s...', isError: true);
+          }
           _start5SecRetryTimer(() {
-            if (mounted && _view == AuthView.login && !_nfcCompleted) {
+            if (mounted &&
+                sessionGen == _nfcSessionGen &&
+                _isNfcSignInView &&
+                !_nfcCompleted) {
               _handleNFCTapLogin(userInitiated: false);
             }
           });
         }
       }
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || sessionGen != _nfcSessionGen || !_isNfcSignInView) {
+        return;
+      }
       final errMsg = 'NFC error: $e';
       setState(() {
         _nfcTapping = false;
         _nfcErrorNote = errMsg;
       });
-      _showSnack('$errMsg. Re-scanning in 5s...', isError: true);
+      if (userInitiated) {
+        _showSnack('$errMsg. Re-scanning in 5s...', isError: true);
+      }
       _start5SecRetryTimer(() {
-        if (mounted && _view == AuthView.login && !_nfcCompleted) {
+        if (mounted &&
+            sessionGen == _nfcSessionGen &&
+            _isNfcSignInView &&
+            !_nfcCompleted) {
           _handleNFCTapLogin(userInitiated: false);
         }
       });
@@ -633,7 +685,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                 children: [
                   if (_savedAccounts.isNotEmpty) ...[
                     PressScale(
-                      onTap: () => _switchView(AuthView.login),
+                      onTap: _openPreferredSignIn,
                       child: Glass(
                         kind: GlassKind.pill,
                         padding: const EdgeInsets.symmetric(
@@ -793,7 +845,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                       : 'I already have an account',
                   variant: BtnVariant.glass,
                   width: double.infinity,
-                  onTap: () => _switchView(AuthView.login),
+                  onTap: _openPreferredSignIn,
                 ),
               ],
             ),
@@ -868,7 +920,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                         height: 220,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          border: Border.all(color: T.teal, width: 1.5),
+                          color: T.op(T.teal, .20),
                         ),
                       ),
                     ),
@@ -1032,7 +1084,11 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
               icon: LucideIcons.chevronLeft,
               size: 40,
               iconSize: 20,
-              onTap: () => _switchView(AuthView.landing),
+              onTap: () => _switchView(
+                (!isSignIn || !_hasRememberedAccount)
+                    ? AuthView.landing
+                    : AuthView.quickUnlock,
+              ),
             ),
             PressScale(
               onTap: _openBackendSettings,
@@ -1134,9 +1190,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
           decoration: BoxDecoration(
             color: active ? T.white(.20) : Colors.transparent,
             borderRadius: BorderRadius.circular(14),
-            border: active
-                ? Border.all(color: T.white(.30), width: 0.5)
-                : null,
           ),
           child: FittedBox(
             fit: BoxFit.scaleDown,
@@ -1155,6 +1208,291 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     );
   }
 
+  String _initialsFor(String name) {
+    final res = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty)
+        .map((w) => w[0].toUpperCase())
+        .take(2)
+        .join();
+    return res.isEmpty ? 'U' : res;
+  }
+
+  Widget _buildNfcPulseRings({required double size, double minScale = 0.55}) {
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        for (var i = 0; i < 3; i++)
+          AnimatedBuilder(
+            animation: _pulseController,
+            builder: (_, _) {
+              final p = ((_pulseController.value * 2.4 - i * 0.8) / 2.4) % 1.0;
+              final pp = p < 0 ? p + 1 : p;
+              return Opacity(
+                opacity: (0.75 * (1 - pp)).clamp(0.0, 1.0),
+                child: Transform.scale(
+                  scale: minScale + 0.95 * pp,
+                  child: Container(
+                    width: size,
+                    height: size,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: T.op(T.teal, .22),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+      ],
+    );
+  }
+
+  Widget _buildNfcWaitingCard({bool compact = false}) {
+    final subtitle = _nfcErrorNote ??
+        (_nfcTapping
+            ? 'Hold bound JCOP4 card now...'
+            : (_retrySecondsLeft > 0
+                ? 'Re-scanning in ${_retrySecondsLeft}s · Tap to retry'
+                : 'One tap · card or 6-digit PIN'));
+    final badgeSize = compact ? 72.0 : 96.0;
+    final coreSize = compact ? 52.0 : 64.0;
+    final badge = SizedBox(
+      width: badgeSize,
+      height: badgeSize,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          if (_nfcTapping)
+            _buildNfcPulseRings(size: compact ? 70 : 92),
+          Container(
+            width: coreSize,
+            height: coreSize,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: T.teal,
+            ),
+            child: _nfcTapping
+                ? Padding(
+                    padding: EdgeInsets.all(compact ? 14 : 18),
+                    child: const CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      color: Colors.white,
+                    ),
+                  )
+                : Icon(
+                    LucideIcons.nfc,
+                    color: Colors.white,
+                    size: compact ? 24 : 30,
+                  ),
+          ),
+        ],
+      ),
+    );
+    return PressScale(
+      scale: 0.98,
+      onTap: () => _handleNFCTapLogin(userInitiated: true),
+      child: Glass(
+        kind: GlassKind.tint,
+        radius: compact ? 22 : T.rCard,
+        padding: EdgeInsets.all(compact ? 16 : 22),
+        child: compact
+            ? Row(
+                children: [
+                  badge,
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Tap to sign in', style: T.text(16, w: T.w800)),
+                        const SizedBox(height: 3),
+                        Text(
+                          subtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: T.text(
+                            11.5,
+                            color: _nfcErrorNote != null
+                                ? T.amber300
+                                : T.white(.60),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              )
+            : Column(
+                children: [
+                  badge,
+                  const SizedBox(height: 12),
+                  Text(
+                    'Tap to sign in',
+                    style: T.text(16, w: T.w800),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    style: T.text(
+                      11.5,
+                      color:
+                          _nfcErrorNote != null ? T.amber300 : T.white(.55),
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+
+  // ── Quick Unlock View (remembered account: NFC tap + direct 6-digit PIN) ─
+
+  Widget _buildQuickUnlockView() {
+    final targetEmail =
+        AccountBackendService.normalizeEmail(_emailController.text);
+    AccountSummary? remembered;
+    for (final a in _savedAccounts) {
+      if (a.email == targetEmail) {
+        remembered = a;
+        break;
+      }
+    }
+    remembered ??= _savedAccounts.isNotEmpty ? _savedAccounts.first : null;
+    if (targetEmail.isEmpty && remembered != null) {
+      _emailController.text = remembered.email;
+    }
+    final displayName = (remembered?.name.trim().isNotEmpty ?? false)
+        ? remembered!.name.trim()
+        : 'Saved wallet';
+    final displayEmail = (remembered?.email.trim().isNotEmpty ?? false)
+        ? remembered!.email.trim()
+        : targetEmail;
+
+    return ListView(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            PressScale(
+              onTap: () => _switchView(AuthView.login),
+              child: Glass(
+                kind: GlassKind.pill,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(LucideIcons.user, color: T.teal, size: 15),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Switch account',
+                      style: T.text(12, w: T.w600, color: T.white(.9)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            PressScale(
+              onTap: _openBackendSettings,
+              child: Glass(
+                kind: GlassKind.pill,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(LucideIcons.settings, color: T.teal, size: 15),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Rules',
+                      style: T.text(12, w: T.w600, color: T.white(.9)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Glass(
+          radius: 20,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: T.teal,
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  _initialsFor(displayName),
+                  style: T.text(13, w: T.w800),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: T.text(15, w: T.w700),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      displayEmail.isNotEmpty
+                          ? displayEmail
+                          : 'Tap card or enter 6-digit PIN',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: T.text(12, color: T.white(.58)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        _buildNfcWaitingCard(compact: true),
+        const SizedBox(height: 18),
+        Center(
+          child: Text(
+            'OR ENTER 6-DIGIT PIN',
+            style: T.mono(10.5, color: T.white(.48), ls: 1.1),
+          ),
+        ),
+        PinDots(n: _pinController.text.length, max: 6),
+        SizedBox(
+          height: 20,
+          child: Center(
+            child: Text(
+              _isLoading ? 'Activating wallet...' : 'Opens on 6th digit',
+              style: T.text(11.5, color: T.white(.52)),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Numpad(
+          value: _pinController.text,
+          max: 6,
+          onChanged: (v) => _onPinChanged(v, pauseNfc: true),
+        ),
+      ],
+    );
+  }
+
   // ── Login View (AuthScreen.tsx 'in' 1:1) ──────────────────────────────────
 
   Widget _buildLoginView() {
@@ -1166,91 +1504,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
         _buildAuthTopChrome(isSignIn: true),
 
         // Hero NFC Tap Card
-        PressScale(
-          scale: 0.98,
-          onTap: () => _handleNFCTapLogin(userInitiated: true),
-          child: Glass(
-            kind: GlassKind.tint,
-            padding: const EdgeInsets.all(22),
-            child: Column(
-              children: [
-                SizedBox(
-                  width: 96,
-                  height: 96,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      if (_nfcTapping)
-                        for (var i = 0; i < 3; i++)
-                          AnimatedBuilder(
-                            animation: _pulseController,
-                            builder: (_, _) {
-                              final p = ((_pulseController.value * 2.4 -
-                                          i * 0.8) /
-                                      2.4) %
-                                  1.0;
-                              final pp = p < 0 ? p + 1 : p;
-                              return Opacity(
-                                opacity: (0.8 * (1 - pp)).clamp(0.0, 1.0),
-                                child: Transform.scale(
-                                  scale: 0.55 + 0.95 * pp,
-                                  child: Container(
-                                    width: 92,
-                                    height: 92,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                          color: T.teal, width: 1.5),
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                      Container(
-                        width: 64,
-                        height: 64,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: T.teal,
-                        ),
-                        child: _nfcTapping
-                            ? const Padding(
-                                padding: EdgeInsets.all(18),
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2.5,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(LucideIcons.nfc,
-                                color: Colors.white, size: 30),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  _nfcTapping
-                      ? 'Hold Bound Tapat Card Now...'
-                      : (_retrySecondsLeft > 0
-                          ? 'Re-scanning in ${_retrySecondsLeft}s (Tap to Retry)'
-                          : 'Tap to sign in'),
-                  style: T.text(16, w: T.w800),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  _nfcErrorNote ?? 'One tap · hardware-verified',
-                  style: T.text(
-                    11.5,
-                    color: _nfcErrorNote != null ? T.amber300 : T.white(.55),
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          ),
-        ),
+        _buildNfcWaitingCard(),
 
         // Saved Accounts Chips
         if (_savedAccounts.isNotEmpty) ...[
@@ -1272,13 +1526,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                 final isSelected = AccountBackendService.normalizeEmail(
                         _emailController.text) ==
                     acc.email;
-                final initials = acc.name
-                    .trim()
-                    .split(RegExp(r'\s+'))
-                    .where((w) => w.isNotEmpty)
-                    .map((w) => w[0].toUpperCase())
-                    .take(2)
-                    .join();
+                final initials = _initialsFor(acc.name);
                 return PressScale(
                   onTap: () {
                     _pauseBackgroundNfcForManualTyping();
@@ -1290,15 +1538,10 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                   },
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 260),
-                    child: Container(
+                    child: Glass(
+                      kind: isSelected ? GlassKind.tint : GlassKind.pill,
+                      radius: 18,
                       padding: const EdgeInsets.fromLTRB(6, 6, 14, 6),
-                      decoration: BoxDecoration(
-                        color: isSelected ? T.surfaceTint : T.surfacePill,
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: isSelected ? T.teal : T.surfaceBorder,
-                        ),
-                      ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -1311,7 +1554,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                             ),
                             alignment: Alignment.center,
                             child: Text(
-                              initials.isEmpty ? 'U' : initials,
+                              initials,
                               style: T.text(11, w: T.w800),
                             ),
                           ),
@@ -1393,8 +1636,11 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
 
   bool _pinSubmitting = false;
 
-  Future<void> _onPinChanged(String v) async {
+  Future<void> _onPinChanged(String v, {bool pauseNfc = false}) async {
     if (_pinSubmitting || _isLoading || _isNavigating) return;
+    if (pauseNfc) {
+      _pauseBackgroundNfcForManualTyping();
+    }
     setState(() => _pinController.text = v);
     if (v.length != 6) return;
     _pinSubmitting = true;
@@ -1787,8 +2033,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                                   height: 108,
                                   decoration: BoxDecoration(
                                     shape: BoxShape.circle,
-                                    border:
-                                        Border.all(color: T.teal, width: 1.5),
+                                    color: T.op(T.teal, .20),
                                   ),
                                 ),
                               ),
@@ -1890,6 +2135,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
               key: ValueKey(_view),
               child: switch (_view) {
                 AuthView.landing => _buildLandingView(),
+                AuthView.quickUnlock => _buildQuickUnlockView(),
                 AuthView.login => _buildLoginView(),
                 AuthView.signup => _buildSignupView(),
                 AuthView.registerCard => _buildRegisterCardView(),

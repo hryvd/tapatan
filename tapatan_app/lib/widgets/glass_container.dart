@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 
 class GlassContainer extends StatelessWidget {
@@ -17,8 +18,8 @@ class GlassContainer extends StatelessWidget {
   const GlassContainer({
     super.key,
     required this.child,
-    this.blur = 0.0,
-    this.backgroundColor = const Color(0xFF18181B), // Shadcn card color
+    this.blur = 10.0,
+    this.backgroundColor = const Color.fromRGBO(22, 32, 54, .54),
     this.border,
     this.borderRadius,
     this.padding,
@@ -32,17 +33,29 @@ class GlassContainer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final effectiveBorderRadius = borderRadius ?? BorderRadius.circular(16); // Shadcn uses slightly smaller radius
-    
-    final innerContainer = Container(
+    final effectiveBorderRadius = borderRadius ?? BorderRadius.circular(16);
+    final sigma = blur > 0 ? blur : (isGlass ? 10.0 : 0.0);
+
+    Widget content = Container(
       padding: padding,
       decoration: BoxDecoration(
         color: backgroundColor,
         borderRadius: effectiveBorderRadius,
-        border: border ?? Border.all(color: const Color(0xFF27272A)), // Shadcn border color
+        border: border,
       ),
       child: child,
     );
+
+    if (sigma > 0) {
+      content = ClipRRect(
+        borderRadius: effectiveBorderRadius,
+        clipBehavior: clipBehavior,
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+          child: content,
+        ),
+      );
+    }
 
     return Container(
       margin: margin,
@@ -52,7 +65,7 @@ class GlassContainer extends StatelessWidget {
         borderRadius: effectiveBorderRadius,
         boxShadow: boxShadow,
       ),
-      child: innerContainer,
+      child: content,
     );
   }
 }

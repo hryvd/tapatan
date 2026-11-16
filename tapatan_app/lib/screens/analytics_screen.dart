@@ -148,13 +148,9 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                 children: [
                   Text('Analytics', style: T.h1),
                   const SizedBox(height: 12),
-                  Container(
+                  Glass(
+                    radius: 16,
                     padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: T.surface,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: T.surfaceBorder),
-                    ),
                     child: Row(
                       children: _timeframes.map((tf) {
                         final sel = _timeframe == tf;
@@ -412,14 +408,9 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
     return 'Transfers';
   }
 
-  Widget _card({required Widget child, double pad = 18}) => Container(
-        width: double.infinity,
+  Widget _card({required Widget child, double pad = 18}) => Glass(
+        radius: 20,
         padding: EdgeInsets.all(pad),
-        decoration: BoxDecoration(
-          color: T.surface,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: T.surfaceBorder),
-        ),
         child: child,
       );
 

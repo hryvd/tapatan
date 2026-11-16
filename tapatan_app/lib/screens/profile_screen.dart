@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/user_provider.dart';
@@ -156,26 +156,27 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final c = color ?? Colors.white;
     return PressScale(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-        decoration: BoxDecoration(
-          border: last
-              ? null
-              : Border(bottom: BorderSide(color: T.surfaceBorder)),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, size: 19, color: color ?? T.white(0.65)),
-            const SizedBox(width: 14),
-            Expanded(child: Text(label, style: T.text(14.5, w: T.w600, color: c))),
-            if (trailing != null)
-              Text(trailing, style: T.caption.copyWith(color: T.white(0.45))),
-            if (color == null) ...[
-              const SizedBox(width: 6),
-              Icon(LucideIcons.chevronRight, size: 16, color: T.white(0.30)),
-            ],
-          ],
-        ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+            child: Row(
+              children: [
+                Icon(icon, size: 19, color: color ?? T.white(0.65)),
+                const SizedBox(width: 14),
+                Expanded(child: Text(label, style: T.text(14.5, w: T.w600, color: c))),
+                if (trailing != null)
+                  Text(trailing, style: T.caption.copyWith(color: T.white(0.45))),
+                if (color == null) ...[
+                  const SizedBox(width: 6),
+                  Icon(LucideIcons.chevronRight, size: 16, color: T.white(0.30)),
+                ],
+              ],
+            ),
+          ),
+          if (!last) Divider(height: 1, thickness: 0.5, color: T.white(0.06)),
+        ],
       ),
     );
   }
@@ -218,13 +219,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 style: T.caption.copyWith(color: T.white(0.55))),
           ],
           const SizedBox(height: 28),
-          Container(
-            decoration: BoxDecoration(
-              color: T.surface,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: T.surfaceBorder),
-            ),
-            clipBehavior: Clip.antiAlias,
+          Glass(
+            radius: 20,
+            padding: EdgeInsets.zero,
             child: Column(
               children: [
                 _row(LucideIcons.user, 'Edit name',
@@ -241,13 +238,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          Container(
-            decoration: BoxDecoration(
-              color: T.surface,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: T.surfaceBorder),
-            ),
-            clipBehavior: Clip.antiAlias,
+          Glass(
+            radius: 20,
+            padding: EdgeInsets.zero,
             child: _row(LucideIcons.logOut, 'Sign out', () async {
               await ref.read(userProvider.notifier).signOut();
               widget.onSignOut();

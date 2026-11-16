@@ -36,28 +36,28 @@ class T {
   static Color blk([double o = 1]) => Color.fromRGBO(0, 0, 0, o);
   static Color op(Color c, double o) => c.withValues(alpha: o);
 
-  // ── Brand teal (solid, used for every button) & flat surfaces
+  // ── Brand teal (solid, used for every button) & translucent borderless surfaces
   static const teal = Color(0xFF0D9488);
   static const tealPressed = Color(0xFF0F766E);
-  static const surface = Color(0xFF121A2A);
-  static const surfaceStrong = Color(0xFF172033);
-  static const surfaceTint = Color(0xFF12202B);
-  static const surfacePill = Color(0xFF1B2538);
-  static final surfaceBorder = white(.08);
+  static const surface = Color.fromRGBO(22, 32, 54, .54);
+  static const surfaceStrong = Color.fromRGBO(18, 26, 46, .72);
+  static const surfaceTint = Color.fromRGBO(13, 148, 136, .16);
+  static const surfacePill = Color.fromRGBO(255, 255, 255, .09);
+  static const surfaceBorder = Colors.transparent;
 
-  // ── Glass fills (legacy names, kept for compatibility)
-  static final glassTop = white(.14);
+  // ── Glass fills (legacy names, borderless & translucent)
+  static final glassTop = white(.12);
   static final glassBottom = white(.04);
-  static final glassBorder = white(.22);
-  static const glassStrongFill = Color.fromRGBO(28, 36, 64, .72);
-  static final glassStrongBorder = white(.25);
-  static final glassPillFill = white(.12);
-  static final glassPillBorder = white(.28);
-  static const navFill = Color.fromRGBO(14, 22, 42, .6);
-  static final inputFill = white(.07);
-  static final inputFillFocus = white(.10);
-  static final inputBorder = white(.10);
-  static final inputBorderFocus = cyan400.withValues(alpha: .7);
+  static const glassBorder = Colors.transparent;
+  static const glassStrongFill = Color.fromRGBO(22, 30, 52, .68);
+  static const glassStrongBorder = Colors.transparent;
+  static final glassPillFill = white(.10);
+  static const glassPillBorder = Colors.transparent;
+  static const navFill = Color.fromRGBO(14, 22, 42, .62);
+  static final inputFill = white(.08);
+  static final inputFillFocus = white(.14);
+  static const inputBorder = Colors.transparent;
+  static const inputBorderFocus = Colors.transparent;
 
   // ── Gradients
   static const glassGradient = LinearGradient(

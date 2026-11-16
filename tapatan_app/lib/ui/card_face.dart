@@ -88,7 +88,6 @@ class CardChip extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(6),
           color: const Color(0xFFB8892B), // outer plating edge
-          border: Border.all(color: const Color(0xFF7A5A14), width: .6),
         ),
         child: CustomPaint(painter: _ChipLines()),
       );
@@ -246,7 +245,6 @@ class PassFace extends StatelessWidget {
             ]),
             Positioned(left: c.maxWidth - 110, top: -8, child: Container(width: 16, height: 16, decoration: const BoxDecoration(color: T.bg, shape: BoxShape.circle))),
             Positioned(left: c.maxWidth - 110, bottom: -8, child: Container(width: 16, height: 16, decoration: const BoxDecoration(color: T.bg, shape: BoxShape.circle))),
-            IgnorePointer(child: DecoratedBox(decoration: BoxDecoration(borderRadius: BorderRadius.circular(T.rCard), border: Border.all(color: T.white(.2))))),
           ]),
         );
       }),
@@ -318,16 +316,11 @@ class CardFace extends StatelessWidget {
                 child: Container(
                   width: 48,
                   height: 48,
-                  decoration: BoxDecoration(shape: BoxShape.circle, color: T.white(.3), border: Border.all(color: T.white(.6))),
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: T.white(.3)),
                   child: const Icon(LucideIcons.lock, size: 20, color: Colors.white),
                 ),
               ),
             ),
-          IgnorePointer(
-            child: DecoratedBox(
-              decoration: BoxDecoration(borderRadius: BorderRadius.circular(T.rCard), border: Border.all(color: T.white(.2))),
-            ),
-          ),
         ]),
       ),
     );

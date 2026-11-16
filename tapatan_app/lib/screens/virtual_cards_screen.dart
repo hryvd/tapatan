@@ -632,10 +632,7 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                                 height: 192,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: T.teal.withValues(alpha: (1 - v) * 0.85),
-                                    width: 2,
-                                  ),
+                                  color: T.teal.withValues(alpha: (1 - v) * 0.18),
                                 ),
                               ),
                             ),
@@ -888,14 +885,9 @@ class _VirtualCardsScreenState extends ConsumerState<VirtualCardsScreen>
                             ),
                             if (_syncStatus.isNotEmpty) ...[
                               const SizedBox(height: 10),
-                              Container(
-                                width: double.infinity,
+                              Glass(
+                                radius: 12,
                                 padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: T.white(.05),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: T.white(.08)),
-                                ),
                                 child: Text(
                                   _syncStatus,
                                   textAlign: TextAlign.center,
@@ -1096,10 +1088,6 @@ class _RoundDockBtn extends StatelessWidget {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: primary ? T.teal : T.glassPillFill,
-          border: Border.all(
-            color: primary ? T.teal : T.glassPillBorder,
-            width: .5,
-          ),
         ),
         child: Icon(icon, size: 16, color: Colors.white),
       ),
@@ -1245,7 +1233,6 @@ class _CardBackFaceState extends State<_CardBackFace> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(T.rCard),
-            border: Border.all(color: T.white(.2)),
           ),
           padding: const EdgeInsets.all(12),
           child: Column(
@@ -1355,12 +1342,6 @@ class _CardBackFaceState extends State<_CardBackFace> {
                       style: T.text(9, color: T.white(.65)),
                     ),
                   ],
-                ),
-              ),
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(T.rCard),
-                  border: Border.all(color: T.white(.2)),
                 ),
               ),
             ],
@@ -1515,12 +1496,6 @@ class _CardBackFaceState extends State<_CardBackFace> {
                 ),
               ],
             ),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(T.rCard),
-                border: Border.all(color: T.white(.2)),
-              ),
-            ),
           ],
         ),
       ),
@@ -1597,16 +1572,14 @@ class _XRayExplodedCard extends StatelessWidget {
             decoration: BoxDecoration(
               color: const Color(0xCC06141F),
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: T.op(T.teal, .55)),
             ),
             alignment: Alignment.center,
             child: Container(
               width: 122,
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: T.op(T.teal, .16),
+                color: T.op(T.teal, .24),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: T.teal),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1639,7 +1612,6 @@ class _XRayExplodedCard extends StatelessWidget {
             decoration: BoxDecoration(
               color: T.op(T.amber500, .06),
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: T.op(T.amber300, .5)),
             ),
             padding: const EdgeInsets.all(8),
             child: AnimatedBuilder(
@@ -1658,7 +1630,6 @@ class _XRayExplodedCard extends StatelessWidget {
             decoration: BoxDecoration(
               color: const Color(0x22FFFFFF),
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: T.white(.35)),
             ),
             padding: const EdgeInsets.all(12),
             alignment: Alignment.topLeft,
@@ -2290,14 +2261,10 @@ class _AddCardStudioState extends State<_AddCardStudio> {
                       padding: EdgeInsets.only(right: key == 'emerald' ? 0 : 8),
                       child: GestureDetector(
                         onTap: () => setState(() => _material = key),
-                        child: Container(
+                        child: Glass(
+                          radius: 14,
                           padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: _material == key ? T.teal : T.white(.1),
-                            ),
-                          ),
+                          fill: _material == key ? T.white(.18) : T.white(.05),
                           child: Column(
                             children: [
                               Container(
@@ -2334,22 +2301,18 @@ class _AddCardStudioState extends State<_AddCardStudio> {
                       ),
                       child: GestureDetector(
                         onTap: () => setState(() => _network = net),
-                        child: Container(
+                        child: Glass(
+                          kind: GlassKind.pill,
                           height: 40,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: _network == net ? T.teal : Colors.transparent,
-                            borderRadius: BorderRadius.circular(99),
-                            border: Border.all(
-                              color: _network == net ? T.teal : T.white(.1),
-                            ),
-                          ),
-                          child: Text(
-                            net.split(' ').first,
-                            style: T.text(
-                              12,
-                              w: T.w600,
-                              color: _network == net ? Colors.white : T.white(.6),
+                          fill: _network == net ? T.teal : null,
+                          child: Center(
+                            child: Text(
+                              net.split(' ').first,
+                              style: T.text(
+                                12,
+                                w: T.w600,
+                                color: _network == net ? Colors.white : T.white(.6),
+                              ),
                             ),
                           ),
                         ),
@@ -2486,7 +2449,6 @@ class _AddCardStudioState extends State<_AddCardStudio> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: T.op(T.emerald400, .2),
-                border: Border.all(color: T.op(T.emerald300, .5)),
               ),
               child: const Icon(
                 LucideIcons.check,

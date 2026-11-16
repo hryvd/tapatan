@@ -225,7 +225,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                             decoration: BoxDecoration(
                               color: T.op(T.emerald, 0.18),
                               borderRadius: BorderRadius.circular(999),
-                              border: Border.all(color: T.op(T.emerald, 0.40)),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
@@ -408,7 +407,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
       decoration: BoxDecoration(
         color: T.white(0.08),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: T.white(0.12)),
       ),
       child: Text(label, style: T.caption.copyWith(color: T.white(0.80), fontSize: 10)),
     );
@@ -536,7 +534,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                   decoration: BoxDecoration(
                     color: T.white(0.06),
                     borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: T.white(0.12)),
                   ),
                   child: Text(
                     '${kStrideMatrix.where((s) => s.status == "Mitigated").length}/${kStrideMatrix.length} mitigated',
@@ -672,7 +669,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                   decoration: BoxDecoration(
                     color: const Color(0xFF1E3A8A).withValues(alpha: 0.40),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF1E40AF).withValues(alpha: 0.50)),
                   ),
                   child: const Icon(LucideIcons.creditCard, color: Color(0xFF60A5FA), size: 20),
                 ),
@@ -999,7 +995,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                   decoration: BoxDecoration(
                     color: const Color(0xFF065F46).withValues(alpha: 0.40),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF047857).withValues(alpha: 0.50)),
                   ),
                   child: const Icon(LucideIcons.brain, color: Color(0xFF34D399), size: 20),
                 ),
@@ -1471,7 +1466,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
       decoration: BoxDecoration(
         color: T.op(color, 0.12),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: T.op(color, 0.30)),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -1493,7 +1487,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
       decoration: BoxDecoration(
         color: T.white(0.06),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: T.white(0.10)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1515,7 +1508,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
         decoration: BoxDecoration(
           color: T.white(0.05),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: T.white(0.08)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1543,7 +1535,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
             decoration: BoxDecoration(
               color: T.op(color, 0.25),
               shape: BoxShape.circle,
-              border: Border.all(color: T.op(color, 0.60)),
             ),
             child: Center(
               child: Text(num, style: T.mono(11, w: T.w700, color: color)),
@@ -1570,7 +1561,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
       decoration: BoxDecoration(
         color: T.op(color, 0.12),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: T.op(color, 0.35)),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -1686,7 +1676,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
       decoration: BoxDecoration(
         color: T.white(0.06),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: T.white(0.10)),
       ),
       child: Row(
         children: [
@@ -1711,7 +1700,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
       decoration: BoxDecoration(
         color: T.white(0.06),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: T.white(0.08)),
       ),
       child: Column(
         children: [
@@ -1895,7 +1883,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                 decoration: BoxDecoration(
                   color: T.op(c, 0.14),
                   borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: T.op(c, 0.35)),
                 ),
                 child: Text(
                   t['tier'] as String,

@@ -157,10 +157,6 @@ class _AccountBackendSettingsSheetState
                         decoration: BoxDecoration(
                           color: T.op(T.teal, .16),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: T.op(T.teal, .28),
-                            width: .5,
-                          ),
                         ),
                         child: const Icon(
                           LucideIcons.shieldCheck,

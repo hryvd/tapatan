@@ -489,8 +489,7 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
                                           height: 208,
                                           decoration: BoxDecoration(
                                             shape: BoxShape.circle,
-                                            border: Border.all(
-                                                color: tone, width: 2),
+                                            color: T.op(tone, .18),
                                           ),
                                         ),
                                       ),
@@ -578,22 +577,18 @@ class _NfcFlowScreenState extends State<NfcFlowScreen>
                     _amountStr = v.toString();
                     _amountCtrl.text = _amountStr;
                   }),
-                  child: Container(
+                  child: Glass(
+                    radius: 14,
                     height: 42,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: selected ? T.teal : T.white(.06),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: selected ? T.teal : T.white(.1),
-                      ),
-                    ),
-                    child: Text(
-                      '₱$v',
-                      style: T.text(
-                        12.5,
-                        w: T.w700,
-                        color: selected ? Colors.white : T.white(.75),
+                    fill: selected ? T.teal : null,
+                    child: Center(
+                      child: Text(
+                        '₱$v',
+                        style: T.text(
+                          12.5,
+                          w: T.w700,
+                          color: selected ? Colors.white : T.white(.75),
+                        ),
                       ),
                     ),
                   ),

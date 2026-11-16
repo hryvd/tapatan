@@ -398,14 +398,11 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
               child: Stack(
                 alignment: Alignment.center,
                 children: [
-                  Container(
+                  Glass(
+                    kind: GlassKind.strong,
+                    radius: 999,
                     padding:
                         const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: T.surfaceStrong,
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: T.surfaceBorder),
-                    ),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -420,15 +417,12 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
                     right: 0,
                     child: PressScale(
                       onTap: () => Navigator.of(context).pop(null),
-                      child: Container(
+                      child: const Glass(
+                        kind: GlassKind.strong,
+                        radius: 999,
                         width: 42,
                         height: 42,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: T.surfaceStrong,
-                          border: Border.all(color: T.surfaceBorder),
-                        ),
-                        child: const Icon(LucideIcons.x,
+                        child: Icon(LucideIcons.x,
                             color: Colors.white, size: 20),
                       ),
                     ),
@@ -536,7 +530,6 @@ class _FaceLivenessScreenState extends State<FaceLivenessScreen>
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: T.op(_frameColor, .18),
-                    border: Border.all(color: T.op(_frameColor, .5)),
                   ),
                   child: Icon(_stepIcon, color: _frameColor, size: 22),
                 ),

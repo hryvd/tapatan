@@ -90,9 +90,6 @@ class _GlassButtonState extends State<GlassButton>
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(14),
               color: bgColor,
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.14),
-              ),
             ),
             child: Center(
               child: DefaultTextStyle(

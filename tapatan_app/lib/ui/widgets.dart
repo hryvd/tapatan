@@ -69,23 +69,30 @@ class Glass extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Flat surface: solid translucent fill + hairline border. No gradient,
-    // no highlight, no glow, no per-frame backdrop blur (performance).
+    // Translucent blurred surface with no stroke/border, no glow, no liquid highlight.
     late double r;
+    late double sigma;
     late Color color;
-    late Color border;
     switch (kind) {
       case GlassKind.glass:
-        r = T.rGlass; color = T.surface; border = T.surfaceBorder;
+        r = T.rGlass;
+        color = T.surface;
+        sigma = 10;
         break;
       case GlassKind.strong:
-        r = T.rStrong; color = T.surfaceStrong; border = T.surfaceBorder;
+        r = T.rStrong;
+        color = T.surfaceStrong;
+        sigma = 14;
         break;
       case GlassKind.tint:
-        r = T.rGlass; color = T.surfaceTint; border = T.surfaceBorder;
+        r = T.rGlass;
+        color = T.surfaceTint;
+        sigma = 10;
         break;
       case GlassKind.pill:
-        r = 999; color = T.surfacePill; border = T.surfaceBorder;
+        r = 999;
+        color = T.surfacePill;
+        sigma = 8;
         break;
     }
     if (radius != null) r = radius!;
@@ -98,10 +105,19 @@ class Glass extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: br,
         color: color,
-        border: Border.all(color: border, width: .5),
       ),
       child: child,
     );
+    if (blur) {
+      body = ClipRRect(
+        borderRadius: br,
+        clipBehavior: Clip.antiAlias,
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+          child: body,
+        ),
+      );
+    }
     if (margin != null) {
       body = Padding(padding: margin!, child: body);
     }
@@ -248,16 +264,19 @@ class _FieldState extends State<Field> {
       padding: const EdgeInsets.only(bottom: 12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(widget.label, style: T.label)),
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          height: T.fieldH,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          decoration: BoxDecoration(
-            color: _focus ? T.inputFillFocus : T.inputFill,
-            borderRadius: BorderRadius.circular(T.rField),
-            border: Border.all(color: _focus ? T.inputBorderFocus : T.inputBorder),
-          ),
-          child: Row(children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(T.rField),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              height: T.fieldH,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              decoration: BoxDecoration(
+                color: _focus ? T.inputFillFocus : T.inputFill,
+                borderRadius: BorderRadius.circular(T.rField),
+              ),
+              child: Row(children: [
             Expanded(
               child: TextFormField(
                 focusNode: _node,
@@ -284,6 +303,8 @@ class _FieldState extends State<Field> {
             ),
             if (widget.suffix != null) widget.suffix!,
           ]),
+            ),
+          ),
         ),
       ]),
     );
@@ -388,8 +409,7 @@ class PinDots extends StatelessWidget {
               height: 14,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: i < n ? T.teal : Colors.transparent,
-                border: Border.all(color: i < n ? T.teal : T.white(.3)),
+                color: i < n ? T.teal : T.white(.22),
               ),
             ),
         ]),
@@ -406,10 +426,16 @@ class Badge2 extends StatelessWidget {
   final double fontSize;
   const Badge2(this.text, {super.key, this.color = T.emerald400, this.textColor, this.mono = true, this.fontSize = 8.5});
   @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        decoration: BoxDecoration(color: T.op(color, .2), borderRadius: BorderRadius.circular(99), border: Border.all(color: T.op(color, .5))),
-        child: Text(text, style: (mono ? T.mono(fontSize) : T.text(fontSize, w: T.w600)).copyWith(color: textColor ?? T.emerald300)),
+  Widget build(BuildContext context) => ClipRRect(
+        borderRadius: BorderRadius.circular(99),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(color: T.op(color, .22), borderRadius: BorderRadius.circular(99)),
+            child: Text(text, style: (mono ? T.mono(fontSize) : T.text(fontSize, w: T.w600)).copyWith(color: textColor ?? T.emerald300)),
+          ),
+        ),
       );
 }
 
@@ -443,23 +469,53 @@ class LinkText extends StatelessWidget {
       );
 }
 
-// ───────────────────────── Page background (aurora) ─────────────────────────
-/// Scaffold-less page: #0A0E17 + drifting cyan/indigo glow orbs. Wrap each screen body.
-class AppBackground extends StatefulWidget {
+// ───────────────────────── Page background (static depth) ─────────────────────────
+/// Static ambient backdrop so blurred translucent elements have subtle depth without per-frame ticks.
+class AppBackground extends StatelessWidget {
   final Widget child;
   const AppBackground({super.key, required this.child});
-  @override
-  State<AppBackground> createState() => _AppBackgroundState();
-}
 
-class _AppBackgroundState extends State<AppBackground> with TickerProviderStateMixin {
-  // Flat background: no animated glow orbs (removed for a clean look and to
-  // stop the continuous full-screen repaints that made the app lag).
   @override
   Widget build(BuildContext context) {
-    return ColoredBox(
-      color: T.bg,
-      child: SizedBox.expand(child: widget.child),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const RepaintBoundary(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF070C16), T.bg, Color(0xFF0A1624)],
+              ),
+            ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: Alignment(-0.75, -0.80),
+                      radius: 0.95,
+                      colors: [Color(0x240D9488), Color(0x000D9488)],
+                    ),
+                  ),
+                ),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: Alignment(0.85, 0.78),
+                      radius: 0.90,
+                      colors: [Color(0x1E1D4ED8), Color(0x001D4ED8)],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        child,
+      ],
     );
   }
 }
@@ -823,62 +879,65 @@ class _NfcTapState extends State<NfcTap> with TickerProviderStateMixin {
     return Material(
       type: MaterialType.transparency,
       child: ClipRect(
-        child: Container(
-          color: T.op(T.bg, .97),
-          padding: EdgeInsets.fromLTRB(24, MediaQuery.of(context).padding.top + 56, 24, 32),
-          child: Stack(children: [
-            Column(children: [
-              Text('ISO 14443-4 · JCOP4 J3R150', style: T.mono(11, color: T.white(.45), ls: 1.1)),
-              const SizedBox(height: 4),
-              Text(title, textAlign: TextAlign.center, style: T.text(22, w: T.w800)),
-              Expanded(
-                child: AnimatedBuilder(
-                  animation: _shake,
-                  builder: (_, c) {
-                    final v = _shake.value;
-                    final dx = fail && _shake.isAnimating ? (v < .2 ? -8 * v / .2 : v < .4 ? -8 + 16 * (v - .2) / .2 : v < .6 ? 8 - 16 * (v - .4) / .2 : v < .8 ? -8 + 16 * (v - .6) / .2 : 8 * (1 - v) / .2) : 0.0;
-                    return Transform.translate(offset: Offset(dx, 0), child: c);
-                  },
-                  child: Center(
-                    child: Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
-                      if (!fail && !ok)
-                        for (var i = 0; i < 3; i++)
-                          AnimatedBuilder(
-                            animation: _ring,
-                            builder: (_, _) {
-                              final p = ((_ring.value * 2.4 - i * .8) / 2.4) % 1.0;
-                              final pp = p < 0 ? p + 1 : p;
-                              final eased = Curves.easeOut.transform(pp);
-                              return Opacity(
-                                opacity: .8 * (1 - eased),
-                                child: Transform.scale(scale: .4 + 1.2 * eased, child: Container(width: 208, height: 208, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: tone, width: 2)))),
-                              );
-                            },
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            color: T.op(T.bg, .76),
+            padding: EdgeInsets.fromLTRB(24, MediaQuery.of(context).padding.top + 56, 24, 32),
+            child: Stack(children: [
+              Column(children: [
+                Text('ISO 14443-4 · JCOP4 J3R150', style: T.mono(11, color: T.white(.45), ls: 1.1)),
+                const SizedBox(height: 4),
+                Text(title, textAlign: TextAlign.center, style: T.text(22, w: T.w800)),
+                Expanded(
+                  child: AnimatedBuilder(
+                    animation: _shake,
+                    builder: (_, c) {
+                      final v = _shake.value;
+                      final dx = fail && _shake.isAnimating ? (v < .2 ? -8 * v / .2 : v < .4 ? -8 + 16 * (v - .2) / .2 : v < .6 ? 8 - 16 * (v - .4) / .2 : v < .8 ? -8 + 16 * (v - .6) / .2 : 8 * (1 - v) / .2) : 0.0;
+                      return Transform.translate(offset: Offset(dx, 0), child: c);
+                    },
+                    child: Center(
+                      child: Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
+                        if (!fail && !ok)
+                          for (var i = 0; i < 3; i++)
+                            AnimatedBuilder(
+                              animation: _ring,
+                              builder: (_, _) {
+                                final p = ((_ring.value * 2.4 - i * .8) / 2.4) % 1.0;
+                                final pp = p < 0 ? p + 1 : p;
+                                final eased = Curves.easeOut.transform(pp);
+                                return Opacity(
+                                  opacity: .8 * (1 - eased),
+                                  child: Transform.scale(scale: .4 + 1.2 * eased, child: Container(width: 208, height: 208, decoration: BoxDecoration(shape: BoxShape.circle, color: T.op(tone, .18)))),
+                                );
+                              },
+                            ),
+                        if (fail)
+                          SizedBox(
+                            width: 224, height: 224,
+                            child: AnimatedBuilder(animation: _dash, builder: (_, _) => CustomPaint(painter: _RingPainter(_dash.value))),
                           ),
-                      if (fail)
-                        SizedBox(
-                          width: 224, height: 224,
-                          child: AnimatedBuilder(animation: _dash, builder: (_, _) => CustomPaint(painter: _RingPainter(_dash.value))),
-                        ),
-                      AnimatedScale(
-                        scale: ok ? 1.1 : 1,
-                        duration: const Duration(milliseconds: 250),
-                        child: Container(
-                          decoration: const BoxDecoration(shape: BoxShape.circle),
-                          child: Glass(
-                            radius: 64, width: 128, height: 128,
-                            child: Icon(ok ? LucideIcons.check : fail ? LucideIcons.shieldAlert : LucideIcons.nfc, size: 56, color: tone),
+                        AnimatedScale(
+                          scale: ok ? 1.1 : 1,
+                          duration: const Duration(milliseconds: 250),
+                          child: Container(
+                            decoration: const BoxDecoration(shape: BoxShape.circle),
+                            child: Glass(
+                              radius: 64, width: 128, height: 128,
+                              child: Icon(ok ? LucideIcons.check : fail ? LucideIcons.shieldAlert : LucideIcons.nfc, size: 56, color: tone),
+                            ),
                           ),
                         ),
-                      ),
-                    ]),
+                      ]),
+                    ),
                   ),
                 ),
-              ),
-              _bottom(fail, ok),
+                _bottom(fail, ok),
+              ]),
+              Positioned(top: 0, right: -4, child: GlassIconBtn(icon: LucideIcons.x, size: 36, onTap: widget.onCancel)),
             ]),
-            Positioned(top: 0, right: -4, child: GlassIconBtn(icon: LucideIcons.x, size: 36, onTap: widget.onCancel)),
-          ]),
+          ),
         ),
       ),
     );

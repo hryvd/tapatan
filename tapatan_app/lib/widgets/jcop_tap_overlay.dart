@@ -204,8 +204,7 @@ class _JcopTapOverlayState extends State<JcopTapOverlay>
                                         height: 208,
                                         decoration: BoxDecoration(
                                           shape: BoxShape.circle,
-                                          border: Border.all(
-                                              color: tone, width: 2),
+                                          color: T.op(tone, .18),
                                         ),
                                       ),
                                     ),

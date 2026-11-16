@@ -34,6 +34,9 @@ void main() {
     expect(T.btnShadow, isEmpty);
     expect(T.lensShadow, isEmpty);
     expect(T.glow(T.teal), isEmpty);
+    expect(T.surface.a, lessThan(1.0));
+    expect(T.surfaceBorder, Colors.transparent);
+    expect(T.glassBorder, Colors.transparent);
     expect(ui_card.kMaterials.keys, containsAll(['obsidian', 'cyber', 'emerald', 'indigo']));
   });
 
@@ -101,29 +104,100 @@ void main() {
     expect(notifier.state.name, 'Maria Clara');
   });
 
-  testWidgets('AuthScreen returns directly to Sign In with tappable saved accounts on reopen', (tester) async {
+  testWidgets('AuthScreen opens directly to remembered NFC + 6-digit PIN page and links to Switch account page', (tester) async {
+    await tester.runAsync(() async {
+      final reg = await AccountBackendService.registerAccount(
+        name: 'Elena Reyes',
+        email: 'elena.quick@tapat.ph',
+        pin: '654321',
+        cardId: 'CARD_ELENA_Q',
+      );
+      expect(reg.success, isTrue);
+      await AccountBackendService.signOut();
+    });
+
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(
-      const ProviderScope(
-        child: MaterialApp(home: AuthScreen()),
+      ProviderScope(
+        child: MaterialApp(
+          routes: {
+            '/auth': (_) => const AuthScreen(),
+            '/main': (_) => const Scaffold(body: Text('MAIN_SHELL')),
+          },
+          home: const AuthScreen(),
+        ),
       ),
     );
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
 
+    // Dedicated direct activation view for remembered signed-up account
+    expect(find.text('Elena Reyes'), findsOneWidget);
+    expect(find.text('elena.quick@tapat.ph'), findsOneWidget);
     expect(find.text('Tap to sign in'), findsOneWidget);
-    expect(find.text('SAVED ACCOUNTS ON DEVICE'), findsOneWidget);
+    expect(find.text('Switch account'), findsOneWidget);
+    expect(find.byType(PinDots), findsOneWidget);
+    expect(tester.widget<PinDots>(find.byType(PinDots)).max, 6);
+    expect(find.text('Email address'), findsNothing);
+    expect(find.text('Confirm'), findsNothing);
+    expect(tester.takeException(), isNull);
 
-    await tester.tap(find.textContaining('juan.v2@tapat.ph').first);
-    await tester.pump(const Duration(milliseconds: 300));
+    // Separate Switch account page holds all saved accounts and Create Account / KYC
+    await tester.tap(find.text('Switch account'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(find.text('SAVED ACCOUNTS ON DEVICE'), findsOneWidget);
+    expect(find.text('Create Account / KYC'), findsOneWidget);
+
+    await tester.tap(find.textContaining('elena.quick@tapat.ph').first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
 
     expect(find.text('Enter your PIN'), findsOneWidget);
     expect(find.text('Confirm'), findsNothing);
     expect(tester.widget<PinDots>(find.byType(PinDots)).max, 6);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('AuthScreen direct unlock activates automatically on 6th PIN digit', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          routes: {
+            '/auth': (_) => const AuthScreen(),
+            '/main': (_) => const Scaffold(body: Text('MAIN_SHELL')),
+          },
+          home: const AuthScreen(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(find.text('Elena Reyes'), findsOneWidget);
+    for (final ch in ['6', '5', '4', '3', '2', '1']) {
+      await tester.tap(
+        find.descendant(of: find.byType(Numpad), matching: find.text(ch)),
+      );
+      await tester.pump();
+    }
+    for (var i = 0; i < 6; i++) {
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+      });
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.text('MAIN_SHELL'), findsOneWidget);
   });
 
   testWidgets('Glass stretches to full Expanded/ListView slot width and uniform row height', (tester) async {
@@ -197,11 +271,21 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Flat surface Glass removes BackdropFilter and stretches to outer width
+    // Translucent BackdropFilter blur without stroke/border, stretching to outer width
     expect(
       find.descendant(of: find.byType(Glass), matching: find.byType(BackdropFilter)),
-      findsNothing,
+      findsWidgets,
     );
+    final glassContainers = tester.widgetList<Container>(
+      find.descendant(of: find.byType(Glass), matching: find.byType(Container)),
+    );
+    for (final c in glassContainers) {
+      final deco = c.decoration as BoxDecoration?;
+      if (deco != null) {
+        expect(deco.border, isNull);
+        expect((deco.color?.a ?? 1.0), lessThan(1.0));
+      }
+    }
 
     final heroOuterSize = tester.getSize(find.byKey(const ValueKey('hero-glass')));
     final heroInnerSize = tester.getSize(
@@ -300,6 +384,14 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 200));
     expect(find.text('Scan Valid ID'), findsOneWidget);
+    final scanRect = CameraCaptureOverlay.computeScanRect(
+      const Size(390, 844),
+      EdgeInsets.zero,
+    );
+    final overlayRect = tester.getRect(
+      find.byKey(const ValueKey('id-scan-bottom-overlay')),
+    );
+    expect(overlayRect.top, greaterThanOrEqualTo(scanRect.bottom));
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(
@@ -333,6 +425,22 @@ void main() {
     expect(find.text('Enrolled'), findsNothing);
     expect(find.text('KYC Verified'), findsNothing);
     expect(find.text('TPT'), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    // Active tap timer renders as amber rounded rectangle matching Disarm height & radius, borderless
+    final homeContainer =
+        ProviderScope.containerOf(tester.element(find.byType(HomeScreen)));
+    homeContainer.read(userProvider.notifier).armCard();
+    await tester.pump();
+    final disarmSize = tester.getSize(find.widgetWithText(Btn, 'Disarm'));
+    final timerFinder = find.ancestor(
+      of: find.text('5:00'),
+      matching: find.byType(Glass),
+    ).first;
+    final timerWidget = tester.widget<Glass>(timerFinder);
+    expect(timerWidget.radius, T.rBtn);
+    expect(timerWidget.height, T.btnH);
+    expect(tester.getSize(timerFinder).height, closeTo(disarmSize.height, 0.5));
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(

@@ -136,23 +136,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         amt = v.toDouble();
                         ctrl.text = v.toString();
                       }),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 160),
+                      child: Glass(
+                        radius: 16,
                         height: 46,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: selected ? T.teal : T.white(.06),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: selected ? T.teal : T.white(.1),
-                          ),
-                        ),
-                        child: Text(
-                          '₱$v',
-                          style: T.text(
-                            13,
-                            w: T.w700,
-                            color: selected ? Colors.white : T.white(.75),
+                        fill: selected ? T.teal : null,
+                        child: Center(
+                          child: Text(
+                            '₱$v',
+                            style: T.text(
+                              13,
+                              w: T.w700,
+                              color: selected ? Colors.white : T.white(.75),
+                            ),
                           ),
                         ),
                       ),
@@ -305,7 +300,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 decoration: BoxDecoration(
                   color: T.blk(.55),
                   borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: T.white(.12)),
                 ),
                 child: Stack(
                   alignment: Alignment.center,
@@ -583,12 +577,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         const SizedBox(height: 16),
 
         // ── 2. Hero Card Tile + Wallet Balance + Arm CTA ───────────────────
-        Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(30),
-            color: T.surface,
-            border: Border.all(color: T.surfaceBorder, width: 0.6),
-          ),
+        Glass(
+          radius: 30,
           padding: const EdgeInsets.all(12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -685,19 +675,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       )
                     : Row(
                         children: [
-                          Container(
-                            height: 48,
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: T.op(T.amber500, .15),
-                              borderRadius: BorderRadius.circular(99),
-                              border:
-                                  Border.all(color: T.op(T.amber300, .4)),
-                            ),
-                            child: Text(
-                              _mmss(_armedSecsLeft),
-                              style: T.mono(12, color: T.amber300),
+                          Glass(
+                            radius: T.rBtn,
+                            height: T.btnH,
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 14),
+                            fill: T.op(T.amber500, .20),
+                            child: Center(
+                              child: Text(
+                                _mmss(_armedSecsLeft),
+                                style: T.mono(12,
+                                    w: T.w700, color: T.amber300),
+                              ),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -829,22 +818,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   padding: const EdgeInsets.only(right: 8),
                   child: PressScale(
                     onTap: () => setState(() => _filter = f.$1),
-                    child: Container(
+                    child: Glass(
+                      kind: GlassKind.pill,
+                      fill: _filter == f.$1 ? T.teal : null,
                       padding: const EdgeInsets.symmetric(horizontal: 14),
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: _filter == f.$1 ? T.teal : T.white(.05),
-                        borderRadius: BorderRadius.circular(99),
-                        border: Border.all(
-                          color: _filter == f.$1 ? T.teal : T.white(.10),
-                        ),
-                      ),
-                      child: Text(
-                        f.$2,
-                        style: T.text(
-                          12,
-                          w: T.w600,
-                          color: _filter == f.$1 ? Colors.white : T.white(.60),
+                      child: Center(
+                        child: Text(
+                          f.$2,
+                          style: T.text(
+                            12,
+                            w: T.w600,
+                            color: _filter == f.$1
+                                ? Colors.white
+                                : T.white(.60),
+                          ),
                         ),
                       ),
                     ),

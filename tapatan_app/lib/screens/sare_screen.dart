@@ -379,24 +379,19 @@ class _SarEScreenState extends ConsumerState<SarEScreen> {
                                 padding: const EdgeInsets.only(right: 8),
                                 child: PressScale(
                                   onTap: () => setState(() => _selectedCategory = cat),
-                                  child: AnimatedContainer(
-                                    duration: const Duration(milliseconds: 150),
+                                  child: Glass(
+                                    kind: GlassKind.pill,
+                                    fill: isSelected ? T.teal : null,
                                     height: 32,
                                     padding: const EdgeInsets.symmetric(horizontal: 14),
-                                    alignment: Alignment.center,
-                                    decoration: BoxDecoration(
-                                      color: isSelected ? T.teal : T.white(0.05),
-                                      borderRadius: BorderRadius.circular(999),
-                                      border: Border.all(
-                                        color: isSelected ? T.teal : T.white(0.10),
-                                      ),
-                                    ),
-                                    child: Text(
-                                      cat,
-                                      style: T.text(
-                                        12,
-                                        w: T.w600,
-                                        color: isSelected ? Colors.white : T.white(0.60),
+                                    child: Center(
+                                      child: Text(
+                                        cat,
+                                        style: T.text(
+                                          12,
+                                          w: T.w600,
+                                          color: isSelected ? Colors.white : T.white(0.60),
+                                        ),
                                       ),
                                     ),
                                   ),
